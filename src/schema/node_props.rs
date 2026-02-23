@@ -4,7 +4,7 @@ use crate::schema::props::*;
 use crate::schema::NodeType;
 
 /// Type-safe discriminated union of all node properties.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "_type")]
 pub enum NodeProps {
     // Reality

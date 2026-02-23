@@ -1,5 +1,10 @@
 # mindgraph
 
+[![Crates.io](https://img.shields.io/crates/v/mindgraph.svg)](https://crates.io/crates/mindgraph)
+[![Documentation](https://docs.rs/mindgraph/badge.svg)](https://docs.rs/mindgraph)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/shuruheel/mindgraph-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/shuruheel/mindgraph-rs/actions/workflows/ci.yml)
+
 A structured semantic memory graph for agentic systems, built in Rust with [CozoDB](https://www.cozodb.org/) as the embedded Datalog storage engine.
 
 ## Overview
@@ -22,7 +27,7 @@ The graph supports **48 node types** and **70 edge types**, each with type-safe 
 - **Type-safe schema** -- 48 node types and 70 edge types as Rust enums with typed props
 - **CozoDB storage** -- Embedded Datalog database with SQLite persistence or in-memory mode
 - **Full-text search** -- FTS indices on node labels and summaries with scoring and type/layer filters
-- **Structured filtering** -- `NodeFilter` builder for type, layer, label substring, prop value, and confidence range queries
+- **Structured filtering** -- `NodeFilter` builder for type (single or multi-type), layer, label substring, prop value, and confidence range queries
 - **Graph traversal** -- Optimized 2-query BFS, reasoning chains, neighborhoods, path finding, subgraph extraction, weight threshold filtering
 - **Builder pattern** -- Ergonomic fluent API for node and edge updates
 - **Pagination** -- Bounded result sets with `has_more` detection for production use
@@ -37,15 +42,17 @@ The graph supports **48 node types** and **70 edge types**, each with type-safe 
 - **Thread safety** -- `MindGraph` is `Send + Sync`, safe to share via `Arc<MindGraph>` or `into_shared()`
 - **Async support** -- Optional `AsyncMindGraph` wrapper for tokio runtimes (feature flag: `async`) with all methods
 - **Server-side query filtering** -- Query patterns push filtering into CozoDB Datalog for efficient large-graph queries
-- **Embedding/vector search** -- Pluggable `EmbeddingProvider` trait, CozoDB HNSW indices, `semantic_search()` with cosine distance
+- **Embedding/vector search** -- Pluggable `EmbeddingProvider` trait (sync; `AsyncMindGraph` wraps via `spawn_blocking`), CozoDB HNSW indices, `semantic_search()` with cosine distance
 - **Salience decay** -- Exponential decay with configurable half-life via `decay_salience()`, plus `auto_tombstone()` for cleanup
 - **Event subscriptions** -- `on_change()` callback system for reactive patterns on node/edge mutations
-- **Convenience constructors** -- `add_claim()`, `add_entity()`, `add_goal()`, `add_observation()`, `add_memory()`, `add_link()`
+- **Convenience constructors** -- `add_claim()`, `add_entity()`, `add_goal()`, `add_observation()`, `add_session()`, `add_preference()`, `add_summary()`, `add_link()`
 - **Graph statistics** -- `stats()` returns comprehensive `GraphStats` with counts by type/layer
 - **Enhanced query composition** -- OR filters, time ranges, salience ranges, prop conditions, graph-aware `connected_to` filter
 - **Typed export/import** -- `export_typed()` / `import_typed()` with `TypedSnapshot` for structured graph transfer
 - **Validated batch** -- `validate_batch()` pre-validates operations before `apply_validated_batch()`
 - **OpenAI embeddings** -- Optional `openai` feature flag for `OpenAIEmbeddings` provider via `ureq`
+- **Tracing integration** -- Optional `tracing` feature flag for observability instrumentation on key graph methods
+- **Production-safe async** -- `AsyncMindGraph` returns `Error::TaskJoin` instead of panicking on spawn failures
 
 ## Quick Start
 
@@ -105,7 +112,7 @@ Enable the `async` feature for tokio integration:
 
 ```toml
 [dependencies]
-mindgraph = { version = "0.4", features = ["async"] }
+mindgraph = { version = "0.5", features = ["async"] }
 ```
 
 ```rust
@@ -143,6 +150,17 @@ async fn main() -> Result<()> {
 }
 ```
 
+## Tracing
+
+Enable the `tracing` feature for observability:
+
+```toml
+[dependencies]
+mindgraph = { version = "0.5", features = ["tracing"] }
+```
+
+Key methods (`add_node`, `search`, `find_nodes`, `reachable`, `stats`, etc.) are instrumented with `tracing::instrument`. Combine with `tracing-subscriber` to get structured logs.
+
 ## API Reference
 
 ### MindGraph
@@ -168,7 +186,10 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | `add_entity(label, entity_type)` | Add an Entity node with defaults |
 | `add_goal(label, priority)` | Add a Goal node with defaults |
 | `add_observation(label, description)` | Add an Observation node with defaults |
-| `add_memory(label, content)` | Add a Session (memory) node with defaults |
+| `add_session(label, focus)` | Add a Session node with defaults |
+| `add_preference(label, key, value)` | Add a Preference node with defaults |
+| `add_summary(label, content)` | Add a Summary node with defaults |
+| `add_memory(label, content)` | **Deprecated** -- use `add_session()` instead |
 | `add_link(from, to, edge_type)` | Add an edge with default props for the edge type |
 
 **Node operations:**
@@ -198,6 +219,7 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | `edges_from(uid, edge_type?)` | Get all live edges from a node, optionally filtered by type |
 | `edges_to(uid, edge_type?)` | Get all live edges to a node, optionally filtered by type |
 | `count_edges(edge_type)` | Count live edges of a given type |
+| `get_edge_between(from, to, edge_type?)` | Find edges between two nodes, optionally by type |
 
 **Traversal:**
 
@@ -265,8 +287,9 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | `set_embedding(uid, vec)` | Store an embedding vector for a node |
 | `get_embedding(uid)` | Retrieve a node's embedding vector |
 | `delete_embedding(uid)` | Remove a node's embedding |
-| `semantic_search(query_vec, k)` | Find k nearest neighbors by cosine distance |
+| `semantic_search(query_vec, k)` | Find k nearest neighbors by cosine distance (auto-compensates for tombstoned nodes) |
 | `embed_node(uid, provider)` | Generate and store embedding via `EmbeddingProvider` |
+| `embed_nodes(uids, provider)` | Bulk embed multiple nodes via `embed_batch()`, skips tombstoned |
 | `semantic_search_text(query, k, provider)` | Embed query text and search |
 
 **Salience decay:**
@@ -289,19 +312,26 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 |--------|-------------|
 | `stats()` | Get comprehensive `GraphStats` (counts by type, layer, embeddings, etc.) |
 
+**Utility:**
+
+| Method | Description |
+|--------|-------------|
+| `list_nodes(pagination)` | List all live nodes with pagination |
+| `clear()` | Delete all data from all relations (for testing/reset) |
+
 **Typed export/import:**
 
 | Method | Description |
 |--------|-------------|
-| `export_typed()` | Export live graph as `TypedSnapshot` with structured nodes/edges |
-| `import_typed(snapshot)` | Import a typed snapshot (additive merge, skips existing UIDs) |
+| `export_typed()` | Export live graph as `TypedSnapshot` with structured nodes/edges/embeddings |
+| `import_typed(snapshot)` | Import a typed snapshot (additive merge, skips existing UIDs, restores embeddings) |
 
 **Batch operations (GraphOp):**
 
 | Method | Description |
 |--------|-------------|
 | `batch_apply(ops)` | Execute a batch of AddNode/AddEdge/Tombstone operations |
-| `validate_batch(ops)` | Pre-validate a batch, returns `ValidatedBatch` |
+| `validate_batch(ops)` | Pre-validate a batch (auto-assigns UIDs, tracks cross-refs), returns `ValidatedBatch` |
 | `apply_validated_batch(batch)` | Apply a pre-validated batch |
 
 **Query patterns (server-side filtered via CozoDB Datalog):**
@@ -348,6 +378,7 @@ Available behind the `async` feature flag. Wraps `Arc<MindGraph>` and exposes as
 - `.confidence(Confidence)` -- set epistemic certainty (default 1.0)
 - `.salience(Salience)` -- set contextual relevance (default 0.5)
 - `.privacy(PrivacyLevel)` -- set privacy level (default Private)
+- `.with_uid(Uid)` -- pre-assign a UID (for cross-referencing in `validate_batch`)
 
 **CreateEdge** -- built with `CreateEdge::new(from_uid, to_uid, props)`, with optional chained methods:
 - `.confidence(Confidence)` -- set edge confidence (default 1.0)

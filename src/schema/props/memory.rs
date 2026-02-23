@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionProps {
     pub started_at: f64,
@@ -22,7 +22,7 @@ impl Default for SessionProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct TraceProps {
     pub session_uid: Option<String>,
@@ -33,7 +33,7 @@ pub struct TraceProps {
     pub compressed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SummaryProps {
     pub content: String,
@@ -44,7 +44,7 @@ pub struct SummaryProps {
     pub generated_at: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PreferenceProps {
     pub key: String,
@@ -55,7 +55,7 @@ pub struct PreferenceProps {
     pub evidence_count: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryPolicyProps {
     pub policy_type: Option<String>,

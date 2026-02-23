@@ -1,4 +1,10 @@
 /// Trait for embedding providers that convert text to vectors.
+///
+/// This trait is intentionally synchronous. The `openai` feature provides a blocking
+/// implementation via `ureq`. When used with `AsyncMindGraph`, calls are automatically
+/// wrapped in `spawn_blocking`. For high-throughput async workloads, implement a custom
+/// provider that uses an async HTTP client internally (e.g., `reqwest`) and block only
+/// within the `embed`/`embed_batch` methods.
 pub trait EmbeddingProvider: Send + Sync {
     /// The dimensionality of embeddings produced by this provider.
     fn dimension(&self) -> usize;

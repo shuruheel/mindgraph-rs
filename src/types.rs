@@ -3,14 +3,20 @@ use serde::de;
 use std::fmt;
 
 /// Unique identifier for nodes and edges.
+///
+/// Wraps a UUID v4 string. The inner field is private to prevent construction
+/// of invalid UIDs. Use [`Uid::new()`] for random UIDs, [`Uid::from()`] to
+/// wrap an existing string, or [`Uid::as_str()`] to read the value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Uid(String);
 
 impl Uid {
+    /// Generate a new random UUID v4 identifier.
     pub fn new() -> Self {
         Uid(uuid::Uuid::new_v4().to_string())
     }
 
+    /// Get the UID as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -49,6 +55,10 @@ impl From<&str> for Uid {
 }
 
 /// Epistemic certainty score (0.0–1.0).
+///
+/// Used on both nodes and edges to represent how confident the system is
+/// in a piece of knowledge. Validated on construction to ensure the value
+/// stays within bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Confidence(f64);
 
@@ -70,6 +80,7 @@ impl<'de> de::Deserialize<'de> for Confidence {
 }
 
 impl Confidence {
+    /// Create a new confidence value. Returns an error if `value` is outside 0.0–1.0.
     pub fn new(value: f64) -> crate::Result<Self> {
         if (0.0..=1.0).contains(&value) {
             Ok(Confidence(value))
@@ -78,6 +89,7 @@ impl Confidence {
         }
     }
 
+    /// Get the inner f64 value.
     pub fn value(&self) -> f64 {
         self.0
     }
@@ -96,6 +108,10 @@ impl From<Confidence> for f64 {
 }
 
 /// Contextual relevance score (0.0–1.0). Decays over time.
+///
+/// Salience represents how relevant a node is in the current context.
+/// It starts at a configured value (default 0.5) and decays exponentially
+/// via [`MindGraph::decay_salience`](crate::MindGraph::decay_salience).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Salience(f64);
 
@@ -117,6 +133,7 @@ impl<'de> de::Deserialize<'de> for Salience {
 }
 
 impl Salience {
+    /// Create a new salience value. Returns an error if `value` is outside 0.0–1.0.
     pub fn new(value: f64) -> crate::Result<Self> {
         if (0.0..=1.0).contains(&value) {
             Ok(Salience(value))
@@ -125,6 +142,7 @@ impl Salience {
         }
     }
 
+    /// Get the inner f64 value.
     pub fn value(&self) -> f64 {
         self.0
     }
@@ -153,6 +171,7 @@ pub enum PrivacyLevel {
 }
 
 impl PrivacyLevel {
+    /// Get the privacy level as a lowercase string.
     pub fn as_str(&self) -> &str {
         match self {
             PrivacyLevel::Private => "private",

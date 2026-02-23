@@ -59,6 +59,10 @@ pub enum Error {
     #[error("Embedding dimension mismatch: expected {expected}, got {got}")]
     EmbeddingDimensionMismatch { expected: usize, got: usize },
 
+    /// A spawned blocking task failed to join (e.g. due to a panic).
+    #[error("Task join error: {0}")]
+    TaskJoin(String),
+
     /// HTTP error (for optional providers).
     #[cfg(feature = "openai")]
     #[error("HTTP error: {0}")]

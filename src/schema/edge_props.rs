@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::schema::EdgeType;
 
 /// Type-safe discriminated union of all edge properties.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "_type")]
 pub enum EdgeProps {
     // Structural

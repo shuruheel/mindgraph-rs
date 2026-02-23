@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ClaimProps {
     pub content: String,
@@ -13,7 +13,7 @@ pub struct ClaimProps {
     pub uncertainty_range: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct EvidenceProps {
     pub description: String,
@@ -26,7 +26,7 @@ pub struct EvidenceProps {
     pub original_expectation: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WarrantProps {
     pub principle: String,
@@ -48,7 +48,7 @@ impl Default for WarrantProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ArgumentProps {
     pub summary: String,
@@ -58,7 +58,7 @@ pub struct ArgumentProps {
     pub is_sound: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct HypothesisProps {
     pub statement: String,
@@ -69,7 +69,7 @@ pub struct HypothesisProps {
     pub predicted_observations: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct TheoryProps {
     pub name: String,
@@ -81,7 +81,7 @@ pub struct TheoryProps {
     pub predictive_successes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ParadigmProps {
     pub name: String,
@@ -93,7 +93,7 @@ pub struct ParadigmProps {
     pub tension_score: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AnomalyProps {
     pub description: String,
@@ -103,7 +103,7 @@ pub struct AnomalyProps {
     pub resolution_attempts: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct MethodProps {
     pub name: String,
@@ -115,7 +115,7 @@ pub struct MethodProps {
     pub parameters: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ExperimentProps {
     pub name: Option<String>,
@@ -128,7 +128,7 @@ pub struct ExperimentProps {
     pub date_conducted: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ConceptProps {
     pub name: String,
@@ -139,7 +139,7 @@ pub struct ConceptProps {
     pub alternative_definitions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AssumptionProps {
     pub content: String,
@@ -161,7 +161,7 @@ impl Default for AssumptionProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct QuestionProps {
     pub text: String,
@@ -173,7 +173,7 @@ pub struct QuestionProps {
     pub blocking_factors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct OpenQuestionProps {
     pub text: String,
@@ -185,7 +185,7 @@ pub struct OpenQuestionProps {
     pub blocking_factors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AnalogyProps {
     pub description: String,
@@ -197,7 +197,7 @@ pub struct AnalogyProps {
     pub limitations: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PatternProps {
     pub name: String,
@@ -208,7 +208,7 @@ pub struct PatternProps {
     pub generality: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct MechanismProps {
     pub name: String,
@@ -220,7 +220,7 @@ pub struct MechanismProps {
     pub level: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ModelProps {
     pub name: String,
@@ -232,7 +232,7 @@ pub struct ModelProps {
     pub validation_status: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ModelEvaluationProps {
     pub evaluation_type: Option<String>,
@@ -242,7 +242,7 @@ pub struct ModelEvaluationProps {
     pub evaluation_date: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct InferenceChainProps {
     pub description: String,
@@ -253,7 +253,7 @@ pub struct InferenceChainProps {
     pub critical_assumptions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SensitivityAnalysisProps {
     pub analysis_type: Option<String>,
@@ -264,7 +264,7 @@ pub struct SensitivityAnalysisProps {
     pub break_points: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ReasoningStrategyProps {
     pub name: String,
@@ -274,7 +274,7 @@ pub struct ReasoningStrategyProps {
     pub limitations: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct TheoremProps {
     pub name: Option<String>,
@@ -286,7 +286,7 @@ pub struct TheoremProps {
     pub applications: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct EquationProps {
     pub name: Option<String>,

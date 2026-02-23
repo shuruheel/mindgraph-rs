@@ -1356,7 +1356,20 @@ impl CozoStorage {
         if !filter.include_tombstoned {
             conditions.push("tombstone_at == 0.0".to_string());
         }
-        if let Some(ref nt) = filter.node_type {
+        if let Some(ref nts) = filter.node_types {
+            // node_types takes precedence over node_type
+            let or_parts: Vec<String> = nts
+                .iter()
+                .enumerate()
+                .map(|(i, nt)| {
+                    params.insert(format!("f_nt_{}", i), str_val(nt.as_str()));
+                    format!("node_type == $f_nt_{}", i)
+                })
+                .collect();
+            if !or_parts.is_empty() {
+                conditions.push(format!("({})", or_parts.join(" or ")));
+            }
+        } else if let Some(ref nt) = filter.node_type {
             params.insert("f_node_type".into(), str_val(nt.as_str()));
             conditions.push("node_type == $f_node_type".to_string());
         }
@@ -2038,27 +2051,53 @@ impl CozoStorage {
             changed.push((uid_str, old_salience, new_salience));
         }
 
-        // Step 2: Update each changed node's salience
-        for (uid_str, _old, new_sal) in &changed {
-            // Read full node row, update salience and updated_at, write back
-            let read_script = r#"
-                ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
-                  confidence, salience, privacy_level, embedding_ref,
-                  tombstone_at, tombstone_reason, tombstone_by, props] :=
-                    *node[uid, node_type, layer, label, summary, created_at, updated_at, version,
-                          confidence, salience, privacy_level, embedding_ref,
-                          tombstone_at, tombstone_reason, tombstone_by, props],
-                    uid == $uid
-            "#;
-            let mut params = BTreeMap::new();
-            params.insert("uid".into(), str_val(uid_str));
-            let r = self.run_query(read_script, params)?;
-            if r.rows.is_empty() { continue; }
+        // Step 2: Batch-read all changed nodes and batch-write updated salience values
+        if !changed.is_empty() {
+            // Build a lookup map for new salience values
+            let salience_map: std::collections::HashMap<&str, f64> = changed
+                .iter()
+                .map(|(uid, _old, new_sal)| (uid.as_str(), *new_sal))
+                .collect();
 
-            let mut node = self.row_to_node(&r.rows[0])?;
-            node.salience = crate::types::Salience::new(*new_sal).unwrap_or_default();
-            node.updated_at = current_time;
-            self.insert_node(&node)?;
+            // Batch-read full node rows in chunks
+            let uid_strs: Vec<&str> = changed.iter().map(|(u, _, _)| u.as_str()).collect();
+            let mut nodes_to_write: Vec<GraphNode> = Vec::with_capacity(changed.len());
+
+            for chunk in uid_strs.chunks(100) {
+                let or_parts: Vec<String> = chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format!("uid == $br_{}", i))
+                    .collect();
+                let read_script = format!(
+                    r#"
+                    ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
+                      confidence, salience, privacy_level, embedding_ref,
+                      tombstone_at, tombstone_reason, tombstone_by, props] :=
+                        *node[uid, node_type, layer, label, summary, created_at, updated_at, version,
+                              confidence, salience, privacy_level, embedding_ref,
+                              tombstone_at, tombstone_reason, tombstone_by, props],
+                        ({})
+                    "#,
+                    or_parts.join(" or ")
+                );
+                let mut params = BTreeMap::new();
+                for (i, uid_str) in chunk.iter().enumerate() {
+                    params.insert(format!("br_{}", i), str_val(uid_str));
+                }
+                let r = self.run_query(&read_script, params)?;
+                for row in &r.rows {
+                    let mut node = self.row_to_node(row)?;
+                    if let Some(&new_sal) = salience_map.get(node.uid.as_str()) {
+                        node.salience = crate::types::Salience::new(new_sal).unwrap_or_default();
+                        node.updated_at = current_time;
+                        nodes_to_write.push(node);
+                    }
+                }
+            }
+
+            // Batch-write all updated nodes
+            self.insert_nodes_batch(&nodes_to_write)?;
         }
 
         Ok(changed)
@@ -2117,6 +2156,51 @@ impl CozoStorage {
         "#;
         let result = self.run_query(script, BTreeMap::new())?;
         result.rows.iter().map(|row| self.row_to_edge(row)).collect()
+    }
+
+    /// Export all embeddings. Gracefully handles missing `node_embedding` relation.
+    pub fn export_all_embeddings(&self) -> Result<Vec<(Uid, Vec<f32>)>> {
+        let result = self.run_query(
+            "?[uid, embedding] := *node_embedding{uid, embedding}",
+            BTreeMap::new(),
+        );
+        match result {
+            Ok(r) => {
+                let mut embeddings = Vec::new();
+                for row in &r.rows {
+                    let uid = Uid::from(extract_string(&row[0])?.as_str());
+                    let vec = match &row[1] {
+                        DataValue::List(items) => {
+                            items.iter().map(|v| match v {
+                                DataValue::Num(n) => match n {
+                                    cozo::Num::Float(f) => *f as f32,
+                                    cozo::Num::Int(i) => *i as f32,
+                                },
+                                _ => 0.0,
+                            }).collect()
+                        }
+                        DataValue::Vec(v) => {
+                            use cozo::Vector;
+                            match v {
+                                Vector::F32(arr) => arr.to_vec(),
+                                Vector::F64(arr) => arr.iter().map(|x| *x as f32).collect(),
+                            }
+                        }
+                        _ => continue,
+                    };
+                    embeddings.push((uid, vec));
+                }
+                Ok(embeddings)
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("not found") || msg.contains("does not exist") || msg.contains("Cannot find") {
+                    Ok(Vec::new())
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     // ---- Connected-to query helper ----
@@ -2316,6 +2400,106 @@ impl CozoStorage {
             tombstone_at,
             props,
         })
+    }
+
+    // ---- v0.5: get_edge_between ----
+
+    /// Get live edges between two nodes, optionally filtered by edge type.
+    pub fn query_edges_between(
+        &self,
+        from_uid: &Uid,
+        to_uid: &Uid,
+        edge_type: Option<EdgeType>,
+    ) -> Result<Vec<GraphEdge>> {
+        let script = if edge_type.is_some() {
+            r#"
+                ?[uid, from_uid, to_uid, edge_type, layer, created_at, updated_at, version,
+                  confidence, weight, tombstone_at, props] :=
+                    *edge[uid, from_uid, to_uid, edge_type, layer, created_at, updated_at, version,
+                          confidence, weight, tombstone_at, props],
+                    from_uid == $from_uid,
+                    to_uid == $to_uid,
+                    edge_type == $edge_type,
+                    tombstone_at == 0.0
+            "#
+        } else {
+            r#"
+                ?[uid, from_uid, to_uid, edge_type, layer, created_at, updated_at, version,
+                  confidence, weight, tombstone_at, props] :=
+                    *edge[uid, from_uid, to_uid, edge_type, layer, created_at, updated_at, version,
+                          confidence, weight, tombstone_at, props],
+                    from_uid == $from_uid,
+                    to_uid == $to_uid,
+                    tombstone_at == 0.0
+            "#
+        };
+
+        let mut params = BTreeMap::new();
+        params.insert("from_uid".into(), str_val(from_uid.as_str()));
+        params.insert("to_uid".into(), str_val(to_uid.as_str()));
+        if let Some(et) = edge_type {
+            params.insert("edge_type".into(), str_val(et.as_str()));
+        }
+
+        let result = self.run_query(script, params)?;
+        result.rows.iter().map(|row| self.row_to_edge(row)).collect()
+    }
+
+    // ---- v0.5: list_nodes (paginated) ----
+
+    /// List all live nodes with pagination.
+    pub fn query_all_live_nodes_paginated(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<GraphNode>, bool)> {
+        let effective_limit = limit as usize + 1;
+        let script = r#"
+            ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
+              confidence, salience, privacy_level, embedding_ref,
+              tombstone_at, tombstone_reason, tombstone_by, props] :=
+                *node[uid, node_type, layer, label, summary, created_at, updated_at, version,
+                      confidence, salience, privacy_level, embedding_ref,
+                      tombstone_at, tombstone_reason, tombstone_by, props],
+                tombstone_at == 0.0
+            :limit $limit
+            :offset $offset
+        "#;
+
+        let mut params = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(effective_limit as i64));
+        params.insert("offset".into(), DataValue::from(offset as i64));
+
+        let result = self.run_query(script, params)?;
+        let has_more = result.rows.len() > limit as usize;
+        let rows = if has_more { &result.rows[..limit as usize] } else { &result.rows };
+        let nodes: Vec<GraphNode> = rows.iter().map(|row| self.row_to_node(row)).collect::<Result<_>>()?;
+        Ok((nodes, has_more))
+    }
+
+    // ---- v0.5: clear ----
+
+    /// Delete all data from all relations. Destructive operation for testing/reset.
+    pub fn clear_all(&self) -> Result<()> {
+        // Each relation needs its key columns specified for :rm
+        let clear_scripts = [
+            "?[uid] := *edge{uid}\n:rm edge {uid}",
+            "?[uid] := *node{uid}\n:rm node {uid}",
+            "?[node_uid, version] := *node_version{node_uid, version}\n:rm node_version {node_uid, version}",
+            "?[edge_uid, version] := *edge_version{edge_uid, version}\n:rm edge_version {edge_uid, version}",
+            "?[node_uid, source_uid] := *provenance{node_uid, source_uid}\n:rm provenance {node_uid, source_uid}",
+            "?[alias_text, canonical_uid] := *alias{alias_text, canonical_uid}\n:rm alias {alias_text, canonical_uid}",
+            "?[key] := *mg_meta{key}\n:rm mg_meta {key}",
+        ];
+        for script in &clear_scripts {
+            self.run_script(script, BTreeMap::new())?;
+        }
+        // Also try to clear embeddings if they exist
+        let _ = self.run_script(
+            "?[uid] := *node_embedding{uid}\n:rm node_embedding {uid}",
+            BTreeMap::new(),
+        );
+        Ok(())
     }
 }
 

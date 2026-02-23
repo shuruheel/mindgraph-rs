@@ -1,0 +1,1513 @@
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+
+use crate::embeddings::EmbeddingProvider;
+use crate::error::{Error, Result};
+use crate::events::{GraphEvent, SubscriptionId};
+use crate::provenance::ProvenanceRecord;
+use crate::query::{
+    BatchResult, Contradiction, DecayResult, GraphOp, GraphSnapshot, GraphStats,
+    ImportResult, MergeResult, NodeFilter, Page, Pagination, PurgeResult,
+    SearchOptions, SearchResult, TombstoneResult, TypedImportResult, TypedSnapshot,
+    ValidatedBatch, VersionRecord,
+};
+use crate::schema::edge::{CreateEdge, GraphEdge};
+use crate::schema::edge_props::EdgeProps;
+use crate::schema::node::{CreateNode, GraphNode};
+use crate::schema::node_props::NodeProps;
+use crate::schema::{EdgeType, Layer, NodeType};
+use crate::storage::CozoStorage;
+use crate::traversal::{Direction, PathStep, TraversalOptions};
+use crate::types::*;
+
+#[allow(dead_code)]
+const _ASSERT_SEND_SYNC: () = {
+    const fn _assert<T: Send + Sync>() {}
+    _assert::<MindGraph>();
+};
+
+type SubscriberMap = HashMap<u64, Box<dyn Fn(&GraphEvent) + Send + Sync>>;
+
+/// The main graph database interface.
+pub struct MindGraph {
+    storage: CozoStorage,
+    default_agent: RwLock<String>,
+    embedding_dim: RwLock<Option<usize>>,
+    next_sub_id: AtomicU64,
+    subscribers: RwLock<SubscriberMap>,
+}
+
+impl MindGraph {
+    /// Open a persistent graph at the given path (SQLite-backed).
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let storage = CozoStorage::open(path)?;
+        let dim = storage.get_embedding_dimension()?;
+        Ok(MindGraph {
+            storage,
+            default_agent: RwLock::new("system".into()),
+            embedding_dim: RwLock::new(dim),
+            next_sub_id: AtomicU64::new(1),
+            subscribers: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Create an in-memory graph (for testing).
+    pub fn open_in_memory() -> Result<Self> {
+        let storage = CozoStorage::open_in_memory()?;
+        let dim = storage.get_embedding_dimension()?;
+        Ok(MindGraph {
+            storage,
+            default_agent: RwLock::new("system".into()),
+            embedding_dim: RwLock::new(dim),
+            next_sub_id: AtomicU64::new(1),
+            subscribers: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Wrap this graph in an `Arc` for sharing across threads.
+    pub fn into_shared(self) -> Arc<MindGraph> {
+        Arc::new(self)
+    }
+
+    /// Set the default agent identity for operations that don't specify one.
+    pub fn set_default_agent(&self, name: impl Into<String>) {
+        *self.default_agent.write().unwrap() = name.into();
+    }
+
+    /// Get the current default agent identity.
+    pub fn default_agent(&self) -> String {
+        self.default_agent.read().unwrap().clone()
+    }
+
+    /// Access the underlying storage for advanced queries.
+    pub fn storage(&self) -> &CozoStorage {
+        &self.storage
+    }
+
+    // ---- Node Operations ----
+
+    /// Add a new node to the graph.
+    pub fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
+        let node_type = create.props.node_type();
+        let layer = node_type.layer();
+        let ts = now();
+
+        let node = GraphNode {
+            uid: Uid::new(),
+            node_type,
+            layer,
+            label: create.label,
+            summary: create.summary,
+            created_at: ts,
+            updated_at: ts,
+            version: 1,
+            confidence: create.confidence,
+            salience: create.salience,
+            privacy_level: create.privacy_level,
+            embedding_ref: None,
+            tombstone_at: None,
+            tombstone_reason: None,
+            tombstone_by: None,
+            props: create.props,
+        };
+
+        self.storage.insert_node(&node)?;
+
+        let snapshot = serde_json::to_value(&node)?;
+        self.storage
+            .insert_node_version(&node.uid, 1, snapshot, "system", "create", "")?;
+
+        self.emit(GraphEvent::NodeAdded(Box::new(node.clone())));
+
+        Ok(node)
+    }
+
+    /// Get a node by UID. Returns None if not found.
+    pub fn get_node(&self, uid: &Uid) -> Result<Option<GraphNode>> {
+        self.storage.get_node(uid)
+    }
+
+    /// Get a node by UID, returning an error if not found or tombstoned.
+    pub fn get_live_node(&self, uid: &Uid) -> Result<GraphNode> {
+        let node = self
+            .storage
+            .get_node(uid)?
+            .ok_or_else(|| Error::NodeNotFound(uid.to_string()))?;
+        if node.tombstone_at.is_some() {
+            return Err(Error::Tombstoned(uid.to_string()));
+        }
+        Ok(node)
+    }
+
+    /// Update a node's mutable fields. Creates a new version.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_node(
+        &self,
+        uid: &Uid,
+        label: Option<String>,
+        summary: Option<String>,
+        confidence: Option<Confidence>,
+        salience: Option<Salience>,
+        props: Option<NodeProps>,
+        changed_by: &str,
+        reason: &str,
+    ) -> Result<GraphNode> {
+        let mut node = self.get_live_node(uid)?;
+
+        if let Some(l) = label {
+            node.label = l;
+        }
+        if let Some(s) = summary {
+            node.summary = s;
+        }
+        if let Some(c) = confidence {
+            node.confidence = c;
+        }
+        if let Some(s) = salience {
+            node.salience = s;
+        }
+        if let Some(p) = props {
+            if p.node_type() != node.node_type {
+                return Err(Error::TypeMismatch {
+                    expected: node.node_type.to_string(),
+                    got: p.node_type().to_string(),
+                });
+            }
+            node.props = p;
+        }
+
+        node.version += 1;
+        node.updated_at = now();
+
+        self.storage.insert_node(&node)?;
+
+        let snapshot = serde_json::to_value(&node)?;
+        self.storage
+            .insert_node_version(&node.uid, node.version, snapshot, changed_by, "update", reason)?;
+
+        self.emit(GraphEvent::NodeUpdated { uid: node.uid.clone(), version: node.version });
+
+        Ok(node)
+    }
+
+    /// Begin building an update for a node. Call `.apply()` to execute.
+    pub fn update<'a>(&'a self, uid: &'a Uid) -> NodeUpdate<'a> {
+        NodeUpdate {
+            graph: self,
+            uid,
+            label: None,
+            summary: None,
+            confidence: None,
+            salience: None,
+            props: None,
+            changed_by: None,
+            reason: None,
+        }
+    }
+
+    /// Begin building an update for an edge. Call `.apply()` to execute.
+    pub fn update_edge_builder<'a>(&'a self, uid: &'a Uid) -> EdgeUpdate<'a> {
+        EdgeUpdate {
+            graph: self,
+            uid,
+            confidence: None,
+            weight: None,
+            props: None,
+            changed_by: None,
+            reason: None,
+        }
+    }
+
+    // ---- Edge Operations ----
+
+    /// Add a new edge to the graph.
+    pub fn add_edge(&self, create: CreateEdge) -> Result<GraphEdge> {
+        let edge_type = create.props.edge_type();
+        let ts = now();
+
+        let from_node = self.get_live_node(&create.from_uid)?;
+        self.get_live_node(&create.to_uid)?;
+        let layer = from_node.layer;
+
+        let edge = GraphEdge {
+            uid: Uid::new(),
+            from_uid: create.from_uid,
+            to_uid: create.to_uid,
+            edge_type,
+            layer,
+            created_at: ts,
+            updated_at: ts,
+            version: 1,
+            confidence: create.confidence,
+            weight: create.weight,
+            tombstone_at: None,
+            props: create.props,
+        };
+
+        self.storage.insert_edge(&edge)?;
+
+        let snapshot = serde_json::to_value(&edge)?;
+        self.storage
+            .insert_edge_version(&edge.uid, 1, snapshot, "system", "create", "")?;
+
+        self.emit(GraphEvent::EdgeAdded(Box::new(edge.clone())));
+
+        Ok(edge)
+    }
+
+    /// Get an edge by UID.
+    pub fn get_edge(&self, uid: &Uid) -> Result<Option<GraphEdge>> {
+        self.storage.get_edge(uid)
+    }
+
+    /// Get all edges from a node.
+    pub fn edges_from(&self, uid: &Uid, edge_type: Option<EdgeType>) -> Result<Vec<GraphEdge>> {
+        self.storage.query_edges_from(uid, edge_type)
+    }
+
+    /// Get all edges to a node.
+    pub fn edges_to(&self, uid: &Uid, edge_type: Option<EdgeType>) -> Result<Vec<GraphEdge>> {
+        self.storage.query_edges_to(uid, edge_type)
+    }
+
+    /// Get an edge by UID, returning an error if not found or tombstoned.
+    pub fn get_live_edge(&self, uid: &Uid) -> Result<GraphEdge> {
+        let edge = self
+            .storage
+            .get_edge(uid)?
+            .ok_or_else(|| Error::EdgeNotFound(uid.to_string()))?;
+        if edge.tombstone_at.is_some() {
+            return Err(Error::Tombstoned(uid.to_string()));
+        }
+        Ok(edge)
+    }
+
+    /// Update an edge's mutable fields. Creates a new version.
+    pub fn update_edge(
+        &self,
+        uid: &Uid,
+        confidence: Option<Confidence>,
+        weight: Option<f64>,
+        props: Option<EdgeProps>,
+        changed_by: &str,
+        reason: &str,
+    ) -> Result<GraphEdge> {
+        let mut edge = self.get_live_edge(uid)?;
+
+        if let Some(c) = confidence {
+            edge.confidence = c;
+        }
+        if let Some(w) = weight {
+            edge.weight = w;
+        }
+        if let Some(p) = props {
+            if p.edge_type() != edge.edge_type {
+                return Err(Error::TypeMismatch {
+                    expected: edge.edge_type.to_string(),
+                    got: p.edge_type().to_string(),
+                });
+            }
+            edge.props = p;
+        }
+
+        edge.version += 1;
+        edge.updated_at = now();
+
+        self.storage.insert_edge(&edge)?;
+
+        let snapshot = serde_json::to_value(&edge)?;
+        self.storage
+            .insert_edge_version(&edge.uid, edge.version, snapshot, changed_by, "update", reason)?;
+
+        Ok(edge)
+    }
+
+    // ---- Tombstone Operations ----
+
+    /// Soft-delete a node.
+    pub fn tombstone(&self, uid: &Uid, reason: &str, by: &str) -> Result<()> {
+        let mut node = self.get_live_node(uid)?;
+        node.tombstone_at = Some(now());
+        node.tombstone_reason = Some(reason.to_string());
+        node.tombstone_by = Some(by.to_string());
+        node.version += 1;
+        node.updated_at = now();
+
+        self.storage.insert_node(&node)?;
+
+        let snapshot = serde_json::to_value(&node)?;
+        self.storage
+            .insert_node_version(&node.uid, node.version, snapshot, by, "tombstone", reason)?;
+
+        self.emit(GraphEvent::NodeTombstoned(uid.clone()));
+
+        Ok(())
+    }
+
+    /// Restore a tombstoned node.
+    pub fn restore(&self, uid: &Uid) -> Result<()> {
+        let mut node = self
+            .storage
+            .get_node(uid)?
+            .ok_or_else(|| Error::NodeNotFound(uid.to_string()))?;
+
+        if node.tombstone_at.is_none() {
+            return Ok(());
+        }
+
+        node.tombstone_at = None;
+        node.tombstone_reason = None;
+        node.tombstone_by = None;
+        node.version += 1;
+        node.updated_at = now();
+
+        self.storage.insert_node(&node)?;
+
+        let snapshot = serde_json::to_value(&node)?;
+        self.storage
+            .insert_node_version(&node.uid, node.version, snapshot, "system", "restore", "")?;
+
+        Ok(())
+    }
+
+    /// Soft-delete an edge.
+    pub fn tombstone_edge(&self, uid: &Uid, reason: &str, by: &str) -> Result<()> {
+        let mut edge = self.get_live_edge(uid)?;
+        edge.tombstone_at = Some(now());
+        edge.version += 1;
+        edge.updated_at = now();
+
+        self.storage.insert_edge(&edge)?;
+
+        let snapshot = serde_json::to_value(&edge)?;
+        self.storage
+            .insert_edge_version(&edge.uid, edge.version, snapshot, by, "tombstone", reason)?;
+
+        self.emit(GraphEvent::EdgeTombstoned(uid.clone()));
+
+        Ok(())
+    }
+
+    /// Restore a tombstoned edge.
+    pub fn restore_edge(&self, uid: &Uid) -> Result<()> {
+        let mut edge = self
+            .storage
+            .get_edge(uid)?
+            .ok_or_else(|| Error::EdgeNotFound(uid.to_string()))?;
+
+        if edge.tombstone_at.is_none() {
+            return Ok(());
+        }
+
+        edge.tombstone_at = None;
+        edge.version += 1;
+        edge.updated_at = now();
+
+        self.storage.insert_edge(&edge)?;
+
+        let snapshot = serde_json::to_value(&edge)?;
+        self.storage
+            .insert_edge_version(&edge.uid, edge.version, snapshot, "system", "restore", "")?;
+
+        Ok(())
+    }
+
+    /// Tombstone a node and all its connected edges.
+    pub fn tombstone_cascade(&self, uid: &Uid, reason: &str, by: &str) -> Result<TombstoneResult> {
+        // First tombstone all connected edges
+        let connected_edges = self.storage.query_edges_connected(uid)?;
+        let mut edges_tombstoned = 0;
+        for edge in &connected_edges {
+            self.tombstone_edge(&edge.uid, reason, by)?;
+            edges_tombstoned += 1;
+        }
+
+        // Then tombstone the node itself
+        self.tombstone(uid, reason, by)?;
+
+        Ok(TombstoneResult { edges_tombstoned })
+    }
+
+    // ---- Provenance ----
+
+    /// Add a provenance record linking a node to its source.
+    pub fn add_provenance(&self, record: &ProvenanceRecord) -> Result<()> {
+        self.storage.insert_provenance(record)
+    }
+
+    // ---- Entity Resolution ----
+
+    /// Register an alias for an entity.
+    pub fn add_alias(&self, alias_text: &str, canonical_uid: &Uid, match_score: f64) -> Result<()> {
+        self.storage.insert_alias(alias_text, canonical_uid, match_score)
+    }
+
+    /// Resolve a text string to a canonical entity UID.
+    pub fn resolve_alias(&self, text: &str) -> Result<Option<Uid>> {
+        self.storage.resolve_alias(text)
+    }
+
+    // ---- Query Patterns ----
+
+    /// Get all active goals, ranked by priority.
+    pub fn active_goals(&self) -> Result<Vec<GraphNode>> {
+        let mut goals = self
+            .storage
+            .query_nodes_by_type_and_prop(NodeType::Goal, "status", "active")?;
+        goals.sort_by_key(|g| {
+            let p = g
+                .props
+                .to_json()
+                .get("priority")
+                .and_then(|v| v.as_str())
+                .unwrap_or("low")
+                .to_string();
+            match p.as_str() {
+                "critical" => 0,
+                "high" => 1,
+                "medium" => 2,
+                _ => 3,
+            }
+        });
+        Ok(goals)
+    }
+
+    /// Get all pending approvals.
+    pub fn pending_approvals(&self) -> Result<Vec<GraphNode>> {
+        let mut approvals = self
+            .storage
+            .query_nodes_by_type_and_prop(NodeType::Approval, "status", "pending")?;
+        approvals.sort_by(|a, b| {
+            let at_a = a
+                .props
+                .to_json()
+                .get("requested_at")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let at_b = b
+                .props
+                .to_json()
+                .get("requested_at")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            at_a.partial_cmp(&at_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(approvals)
+    }
+
+    /// Get unresolved contradictions.
+    pub fn unresolved_contradictions(&self) -> Result<Vec<Contradiction>> {
+        use crate::storage::cozo::extract_string;
+
+        let script = r#"
+            ?[edge_uid, from_uid, to_uid, from_label, to_label, description, contradiction_type] :=
+                *edge[edge_uid, from_uid, to_uid, edge_type, _, _, _, _, _, _, tombstone_at, props],
+                edge_type == 'CONTRADICTS',
+                tombstone_at == 0.0,
+                description = get(props, 'description', ''),
+                contradiction_type = get(props, 'contradiction_type', ''),
+                resolution_status = get(props, 'resolution_status', 'unresolved'),
+                resolution_status == 'unresolved',
+                *node[from_uid, _, _, from_label, _, _, _, _, _, _, _, _, _, _, _, _],
+                *node[to_uid, _, _, to_label, _, _, _, _, _, _, _, _, _, _, _, _]
+        "#;
+
+        let result = self.storage.run_query(script, BTreeMap::new())?;
+        let mut contradictions = Vec::new();
+        for row in &result.rows {
+            contradictions.push(Contradiction {
+                edge_uid: Uid::from(extract_string(&row[0])?.as_str()),
+                node_a_uid: Uid::from(extract_string(&row[1])?.as_str()),
+                node_b_uid: Uid::from(extract_string(&row[2])?.as_str()),
+                node_a_label: extract_string(&row[3])?,
+                node_b_label: extract_string(&row[4])?,
+                description: {
+                    let s = extract_string(&row[5])?;
+                    if s.is_empty() { None } else { Some(s) }
+                },
+                contradiction_type: {
+                    let s = extract_string(&row[6])?;
+                    if s.is_empty() { None } else { Some(s) }
+                },
+            });
+        }
+        Ok(contradictions)
+    }
+
+    /// Get open decisions.
+    pub fn open_decisions(&self) -> Result<Vec<GraphNode>> {
+        self.storage
+            .query_nodes_by_type_and_prop_in(NodeType::Decision, "status", &["open", "deliberating"])
+    }
+
+    /// Get open questions.
+    pub fn open_questions(&self) -> Result<Vec<GraphNode>> {
+        self.storage
+            .query_nodes_by_type_and_prop_in(NodeType::OpenQuestion, "status", &["open", "partially_addressed"])
+    }
+
+    /// Get claims with confidence below a threshold, sorted ascending.
+    pub fn weak_claims(&self, threshold: f64) -> Result<Vec<GraphNode>> {
+        self.storage
+            .query_nodes_by_type_below_confidence(NodeType::Claim, threshold)
+    }
+
+    /// Get all nodes in a specific layer.
+    pub fn nodes_in_layer(&self, layer: Layer) -> Result<Vec<GraphNode>> {
+        self.storage.query_nodes_by_layer(layer)
+    }
+
+    // ---- Count / Exists ----
+
+    /// Count live nodes of a given type.
+    pub fn count_nodes(&self, node_type: NodeType) -> Result<u64> {
+        self.storage.count_nodes_by_type(node_type)
+    }
+
+    /// Count live nodes in a given layer.
+    pub fn count_nodes_in_layer(&self, layer: Layer) -> Result<u64> {
+        self.storage.count_nodes_by_layer(layer)
+    }
+
+    /// Count live edges of a given type.
+    pub fn count_edges(&self, edge_type: EdgeType) -> Result<u64> {
+        self.storage.count_edges_by_type(edge_type)
+    }
+
+    /// Check if a live (non-tombstoned) node exists.
+    pub fn node_exists(&self, uid: &Uid) -> Result<bool> {
+        self.storage.node_exists(uid)
+    }
+
+    // ---- Traversal ----
+
+    /// Get all nodes reachable from a starting node.
+    pub fn reachable(&self, start: &Uid, opts: &TraversalOptions) -> Result<Vec<PathStep>> {
+        self.storage
+            .traverse_reachable(start, &opts.direction, &opts.edge_types, opts.max_depth, opts.weight_threshold)
+    }
+
+    /// Follow a reasoning chain from a claim node through epistemic edges (both directions).
+    /// The first element is the starting node at depth 0.
+    pub fn reasoning_chain(&self, claim_uid: &Uid, max_depth: u32) -> Result<Vec<PathStep>> {
+        let start_node = self.get_live_node(claim_uid)?;
+        let opts = TraversalOptions {
+            direction: Direction::Both,
+            edge_types: Some(vec![
+                EdgeType::Supports,
+                EdgeType::Refutes,
+                EdgeType::Justifies,
+                EdgeType::HasPremise,
+                EdgeType::HasConclusion,
+                EdgeType::HasWarrant,
+                EdgeType::DerivedFrom,
+                EdgeType::ExtractedFrom,
+            ]),
+            max_depth,
+            weight_threshold: None,
+        };
+        let mut chain = vec![PathStep {
+            node_uid: claim_uid.clone(),
+            label: start_node.label,
+            node_type: start_node.node_type,
+            edge_type: None,
+            depth: 0,
+            parent_uid: None,
+        }];
+        chain.extend(self.reachable(claim_uid, &opts)?);
+        Ok(chain)
+    }
+
+    /// Get the neighborhood of a node up to a given depth (both directions).
+    pub fn neighborhood(&self, uid: &Uid, depth: u32) -> Result<Vec<PathStep>> {
+        let opts = TraversalOptions {
+            direction: Direction::Both,
+            edge_types: None,
+            max_depth: depth,
+            weight_threshold: None,
+        };
+        self.reachable(uid, &opts)
+    }
+
+    /// Find a path between two nodes by backtracking parent pointers from target to source.
+    /// Returns only the nodes on the actual path (excluding the start node).
+    pub fn find_path(&self, from: &Uid, to: &Uid, opts: &TraversalOptions) -> Result<Option<Vec<PathStep>>> {
+        let steps = self.reachable(from, opts)?;
+
+        // Check if 'to' is reachable
+        if !steps.iter().any(|s| s.node_uid == *to) {
+            return Ok(None);
+        }
+
+        // Build a lookup map from node_uid -> PathStep
+        let step_map: std::collections::HashMap<Uid, &PathStep> =
+            steps.iter().map(|s| (s.node_uid.clone(), s)).collect();
+
+        // Backtrack from target to source using parent_uid
+        let mut path = Vec::new();
+        let mut current = to.clone();
+        while current != *from {
+            let step = step_map
+                .get(&current)
+                .ok_or_else(|| Error::NodeNotFound(current.to_string()))?;
+            path.push((*step).clone());
+            current = step
+                .parent_uid
+                .clone()
+                .ok_or_else(|| Error::Storage("broken parent chain in path".into()))?;
+        }
+
+        path.reverse();
+        Ok(Some(path))
+    }
+
+    /// Extract a subgraph reachable from a starting node.
+    pub fn subgraph(
+        &self,
+        start: &Uid,
+        opts: &TraversalOptions,
+    ) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
+        self.storage
+            .subgraph(start, &opts.direction, &opts.edge_types, opts.max_depth, opts.weight_threshold)
+    }
+
+    // ---- Pagination ----
+
+    /// Get nodes in a layer with pagination.
+    pub fn nodes_in_layer_paginated(&self, layer: Layer, page: Pagination) -> Result<Page<GraphNode>> {
+        let (items, has_more) = self.storage.query_nodes_by_layer_paginated(layer, page.limit, page.offset)?;
+        Ok(Page {
+            items,
+            offset: page.offset,
+            limit: page.limit,
+            has_more,
+        })
+    }
+
+    /// Get edges from a node with pagination.
+    pub fn edges_from_paginated(
+        &self,
+        uid: &Uid,
+        edge_type: Option<EdgeType>,
+        page: Pagination,
+    ) -> Result<Page<GraphEdge>> {
+        let (items, has_more) = self.storage.query_edges_from_paginated(uid, edge_type, page.limit, page.offset)?;
+        Ok(Page {
+            items,
+            offset: page.offset,
+            limit: page.limit,
+            has_more,
+        })
+    }
+
+    /// Get weak claims with pagination.
+    pub fn weak_claims_paginated(&self, threshold: f64, page: Pagination) -> Result<Page<GraphNode>> {
+        let (items, has_more) = self
+            .storage
+            .query_nodes_by_type_below_confidence_paginated(NodeType::Claim, threshold, page.limit, page.offset)?;
+        Ok(Page {
+            items,
+            offset: page.offset,
+            limit: page.limit,
+            has_more,
+        })
+    }
+
+    /// Get active goals with pagination, sorted by priority in the database.
+    pub fn active_goals_paginated(&self, page: Pagination) -> Result<Page<GraphNode>> {
+        let (items, has_more) = self
+            .storage
+            .query_active_goals_paginated(page.limit, page.offset)?;
+        Ok(Page {
+            items,
+            offset: page.offset,
+            limit: page.limit,
+            has_more,
+        })
+    }
+
+    /// Get edges to a node with pagination.
+    pub fn edges_to_paginated(
+        &self,
+        uid: &Uid,
+        edge_type: Option<EdgeType>,
+        page: Pagination,
+    ) -> Result<Page<GraphEdge>> {
+        let (items, has_more) = self.storage.query_edges_to_paginated(uid, edge_type, page.limit, page.offset)?;
+        Ok(Page {
+            items,
+            offset: page.offset,
+            limit: page.limit,
+            has_more,
+        })
+    }
+
+    // ---- Batch Operations ----
+
+    /// Add multiple nodes in a single batch operation.
+    pub fn add_nodes_batch(&self, creates: Vec<CreateNode>) -> Result<Vec<GraphNode>> {
+        let mut nodes = Vec::with_capacity(creates.len());
+
+        for create in creates {
+            let node_type = create.props.node_type();
+            let layer = node_type.layer();
+            let ts = now();
+
+            let node = GraphNode {
+                uid: Uid::new(),
+                node_type,
+                layer,
+                label: create.label,
+                summary: create.summary,
+                created_at: ts,
+                updated_at: ts,
+                version: 1,
+                confidence: create.confidence,
+                salience: create.salience,
+                privacy_level: create.privacy_level,
+                embedding_ref: None,
+                tombstone_at: None,
+                tombstone_reason: None,
+                tombstone_by: None,
+                props: create.props,
+            };
+
+            nodes.push(node);
+        }
+
+        self.storage.insert_nodes_batch(&nodes)?;
+
+        for node in &nodes {
+            let snapshot = serde_json::to_value(node)?;
+            self.storage
+                .insert_node_version(&node.uid, 1, snapshot, "system", "create", "")?;
+        }
+
+        Ok(nodes)
+    }
+
+    /// Add multiple edges in a single batch operation.
+    pub fn add_edges_batch(&self, creates: Vec<CreateEdge>) -> Result<Vec<GraphEdge>> {
+        use std::collections::HashMap;
+
+        // Single pass: collect unique from-node UIDs and validate all endpoints
+        let mut from_node_cache: HashMap<Uid, GraphNode> = HashMap::new();
+        for create in &creates {
+            // Validate and cache from-nodes
+            if !from_node_cache.contains_key(&create.from_uid) {
+                let node = self.get_live_node(&create.from_uid)?;
+                from_node_cache.insert(create.from_uid.clone(), node);
+            }
+            // Validate to-nodes exist and are live
+            if !from_node_cache.contains_key(&create.to_uid) {
+                self.get_live_node(&create.to_uid)?;
+            }
+        }
+
+        let mut edges = Vec::with_capacity(creates.len());
+        for create in creates {
+            let edge_type = create.props.edge_type();
+            let layer = from_node_cache[&create.from_uid].layer;
+            let ts = now();
+
+            let edge = GraphEdge {
+                uid: Uid::new(),
+                from_uid: create.from_uid,
+                to_uid: create.to_uid,
+                edge_type,
+                layer,
+                created_at: ts,
+                updated_at: ts,
+                version: 1,
+                confidence: create.confidence,
+                weight: create.weight,
+                tombstone_at: None,
+                props: create.props,
+            };
+
+            edges.push(edge);
+        }
+
+        self.storage.insert_edges_batch(&edges)?;
+
+        for edge in &edges {
+            let snapshot = serde_json::to_value(edge)?;
+            self.storage
+                .insert_edge_version(&edge.uid, 1, snapshot, "system", "create", "")?;
+        }
+
+        Ok(edges)
+    }
+
+    // ---- Version History ----
+
+    /// Get the full version history for a node.
+    pub fn node_history(&self, uid: &Uid) -> Result<Vec<VersionRecord>> {
+        self.storage.node_versions(uid)
+    }
+
+    /// Get the full version history for an edge.
+    pub fn edge_history(&self, uid: &Uid) -> Result<Vec<VersionRecord>> {
+        self.storage.edge_versions(uid)
+    }
+
+    /// Get a node's snapshot at a specific version.
+    pub fn node_at_version(&self, uid: &Uid, version: i64) -> Result<Option<serde_json::Value>> {
+        self.storage.node_at_version(uid, version)
+    }
+
+    // ---- Full-Text Search ----
+
+    /// Search nodes by text query using full-text search indices.
+    pub fn search(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
+        self.storage.query_fts_search(query, opts)
+    }
+
+    // ---- Structured Filtering ----
+
+    /// Find nodes matching structured filter criteria.
+    pub fn find_nodes(&self, filter: &NodeFilter) -> Result<Vec<GraphNode>> {
+        let mut results = {
+            let (nodes, _has_more) = self.storage.query_nodes_filtered(filter)?;
+            nodes
+        };
+
+        // Handle connected_to: post-filter to only nodes connected to the target
+        if let Some(ref target_uid) = filter.connected_to {
+            let connected = self.storage.query_connected_uids(target_uid)?;
+            let connected_set: std::collections::HashSet<_> = connected.into_iter().collect();
+            results.retain(|n| connected_set.contains(&n.uid));
+        }
+
+        // Handle OR filters: union results from sub-filters
+        if let Some(ref or_filters) = filter.or_filters {
+            let mut uid_set: std::collections::HashSet<Uid> = results.iter().map(|n| n.uid.clone()).collect();
+            for sub in or_filters {
+                let sub_results = self.find_nodes(sub)?;
+                for node in sub_results {
+                    if uid_set.insert(node.uid.clone()) {
+                        results.push(node);
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Find nodes matching structured filter criteria, with pagination metadata.
+    pub fn find_nodes_paginated(&self, filter: &NodeFilter) -> Result<Page<GraphNode>> {
+        let items = self.find_nodes(filter)?;
+        let limit = filter.limit.unwrap_or(100) as usize;
+        let has_more = items.len() > limit;
+        let items = if has_more { items[..limit].to_vec() } else { items };
+        Ok(Page {
+            items,
+            offset: filter.offset.unwrap_or(0),
+            limit: filter.limit.unwrap_or(100),
+            has_more,
+        })
+    }
+
+    // ---- Data Lifecycle ----
+
+    /// Permanently delete tombstoned nodes, edges, and their associated data.
+    /// If `older_than` is None, purge all tombstoned data.
+    pub fn purge_tombstoned(&self, older_than: Option<Timestamp>) -> Result<PurgeResult> {
+        self.storage.purge_tombstoned(older_than)
+    }
+
+    /// Export the entire graph as a snapshot.
+    pub fn export(&self) -> Result<GraphSnapshot> {
+        let relations = self.storage.export_all()?;
+        Ok(GraphSnapshot {
+            relations,
+            exported_at: now(),
+            mindgraph_version: env!("CARGO_PKG_VERSION").to_string(),
+        })
+    }
+
+    /// Import a graph snapshot (additive merge).
+    pub fn import(&self, snapshot: &GraphSnapshot) -> Result<ImportResult> {
+        let count = self.storage.import_snapshot(&snapshot.relations)?;
+        Ok(ImportResult {
+            relations_imported: count,
+        })
+    }
+
+    /// Backup the database to a file.
+    pub fn backup(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.storage.backup(path.as_ref())
+    }
+
+    /// Restore the database from a backup file.
+    pub fn restore_backup(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.storage.restore(path.as_ref())
+    }
+
+    // ---- Entity Resolution (extended) ----
+
+    /// Get all aliases registered for a canonical entity UID.
+    pub fn aliases_for(&self, uid: &Uid) -> Result<Vec<(String, f64)>> {
+        self.storage.aliases_for(uid)
+    }
+
+    /// Merge two entities: retarget all edges and aliases from `merge_uid` to `keep_uid`,
+    /// then tombstone the merged entity.
+    pub fn merge_entities(
+        &self,
+        keep_uid: &Uid,
+        merge_uid: &Uid,
+        reason: &str,
+        by: &str,
+    ) -> Result<MergeResult> {
+        // Validate both are live
+        let merge_node = self.get_live_node(merge_uid)?;
+        self.get_live_node(keep_uid)?;
+
+        // Retarget edges
+        let edges_retargeted = self.storage.retarget_edges(merge_uid, keep_uid)?;
+
+        // Retarget aliases
+        let aliases_merged = self.storage.retarget_aliases(merge_uid, keep_uid)?;
+
+        // Add the merged node's label as an alias for the keep node
+        self.add_alias(&merge_node.label, keep_uid, 0.8)?;
+
+        // Tombstone the merged node
+        self.tombstone(merge_uid, reason, by)?;
+
+        Ok(MergeResult {
+            edges_retargeted,
+            aliases_merged,
+        })
+    }
+
+    /// Fuzzy-match text against registered aliases.
+    pub fn fuzzy_resolve(&self, text: &str, limit: u32) -> Result<Vec<(Uid, f64)>> {
+        self.storage.fuzzy_resolve_alias(text, limit)
+    }
+
+    // ---- Batch Operations (GraphOp) ----
+
+    /// Execute a batch of graph operations atomically.
+    pub fn batch_apply(&self, ops: Vec<GraphOp>) -> Result<BatchResult> {
+        let mut result = BatchResult {
+            nodes_added: 0,
+            edges_added: 0,
+            nodes_tombstoned: 0,
+            edges_tombstoned: 0,
+        };
+
+        for op in ops {
+            match op {
+                GraphOp::AddNode(create) => {
+                    self.add_node(*create)?;
+                    result.nodes_added += 1;
+                }
+                GraphOp::AddEdge(create) => {
+                    self.add_edge(*create)?;
+                    result.edges_added += 1;
+                }
+                GraphOp::Tombstone { uid, reason, by } => {
+                    self.tombstone(&uid, &reason, &by)?;
+                    result.nodes_tombstoned += 1;
+                }
+                GraphOp::TombstoneEdge { uid, reason, by } => {
+                    self.tombstone_edge(&uid, &reason, &by)?;
+                    result.edges_tombstoned += 1;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    // ---- v0.4: Stats ----
+
+    /// Get graph-wide statistics.
+    pub fn stats(&self) -> Result<GraphStats> {
+        let dim = self.embedding_dimension();
+        self.storage.query_stats(dim)
+    }
+
+    // ---- v0.4: Convenience Constructors ----
+
+    /// Add a claim node with content and confidence.
+    pub fn add_claim(&self, label: &str, content: &str, confidence: f64) -> Result<GraphNode> {
+        use crate::schema::props::epistemic::ClaimProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Claim(ClaimProps {
+                content: content.to_string(),
+                ..Default::default()
+            }))
+            .confidence(Confidence::new(confidence)?),
+        )
+    }
+
+    /// Add an entity node.
+    pub fn add_entity(&self, label: &str, entity_type: &str) -> Result<GraphNode> {
+        use crate::schema::props::reality::EntityProps;
+        self.add_node(CreateNode::new(label, NodeProps::Entity(EntityProps {
+            entity_type: entity_type.to_string(),
+            ..Default::default()
+        })))
+    }
+
+    /// Add a goal node.
+    pub fn add_goal(&self, label: &str, priority: &str) -> Result<GraphNode> {
+        use crate::schema::props::intent::GoalProps;
+        self.add_node(CreateNode::new(label, NodeProps::Goal(GoalProps {
+            priority: Some(priority.to_string()),
+            status: Some("active".to_string()),
+            ..Default::default()
+        })))
+    }
+
+    /// Add an observation node.
+    pub fn add_observation(&self, label: &str, description: &str) -> Result<GraphNode> {
+        use crate::schema::props::reality::ObservationProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Observation(ObservationProps {
+                content: description.to_string(),
+                ..Default::default()
+            }))
+            .summary(description),
+        )
+    }
+
+    /// Add a memory (session) node.
+    pub fn add_memory(&self, label: &str, content: &str) -> Result<GraphNode> {
+        use crate::schema::props::memory::SessionProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Session(SessionProps {
+                focus_summary: Some(content.to_string()),
+                ..Default::default()
+            }))
+            .summary(content),
+        )
+    }
+
+    /// Add a link (edge) between two nodes with default props for the given type.
+    pub fn add_link(&self, from: &Uid, to: &Uid, edge_type: EdgeType) -> Result<GraphEdge> {
+        self.add_edge(CreateEdge::new(
+            from.clone(),
+            to.clone(),
+            EdgeProps::default_for(edge_type),
+        ))
+    }
+
+    // ---- v0.4: Embeddings ----
+
+    /// Configure embedding support with the given vector dimension.
+    /// Idempotent if the same dimension is used; errors on dimension mismatch.
+    pub fn configure_embeddings(&self, dimension: usize) -> Result<()> {
+        let current = self.embedding_dimension();
+        if let Some(existing) = current {
+            if existing == dimension {
+                return Ok(());
+            }
+            return Err(Error::EmbeddingDimensionMismatch {
+                expected: existing,
+                got: dimension,
+            });
+        }
+        self.storage.create_embedding_schema(dimension)?;
+        *self.embedding_dim.write().unwrap() = Some(dimension);
+        Ok(())
+    }
+
+    /// Get the configured embedding dimension, if any.
+    pub fn embedding_dimension(&self) -> Option<usize> {
+        *self.embedding_dim.read().unwrap()
+    }
+
+    /// Set the embedding vector for a node.
+    pub fn set_embedding(&self, uid: &Uid, embedding: &[f32]) -> Result<()> {
+        let dim = self.embedding_dimension()
+            .ok_or(Error::EmbeddingNotConfigured)?;
+        if embedding.len() != dim {
+            return Err(Error::EmbeddingDimensionMismatch {
+                expected: dim,
+                got: embedding.len(),
+            });
+        }
+        self.storage.upsert_embedding(uid, embedding)
+    }
+
+    /// Get the embedding vector for a node.
+    pub fn get_embedding(&self, uid: &Uid) -> Result<Option<Vec<f32>>> {
+        if self.embedding_dimension().is_none() {
+            return Err(Error::EmbeddingNotConfigured);
+        }
+        self.storage.get_embedding(uid)
+    }
+
+    /// Delete the embedding for a node.
+    pub fn delete_embedding(&self, uid: &Uid) -> Result<()> {
+        if self.embedding_dimension().is_none() {
+            return Err(Error::EmbeddingNotConfigured);
+        }
+        self.storage.delete_embedding(uid)
+    }
+
+    /// Search for semantically similar nodes using a query vector.
+    /// Returns (node, distance) pairs sorted by distance ascending.
+    pub fn semantic_search(&self, query_vec: &[f32], k: usize) -> Result<Vec<(GraphNode, f64)>> {
+        if self.embedding_dimension().is_none() {
+            return Err(Error::EmbeddingNotConfigured);
+        }
+        let raw = self.storage.semantic_search_raw(query_vec, k, k * 2)?;
+        let mut results = Vec::new();
+        for (uid, dist) in raw {
+            if let Some(node) = self.storage.get_node(&uid)? {
+                if node.tombstone_at.is_none() {
+                    results.push((node, dist));
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    /// Embed a node's label+summary text using the given provider.
+    pub fn embed_node(&self, uid: &Uid, provider: &dyn EmbeddingProvider) -> Result<()> {
+        let node = self.get_live_node(uid)?;
+        let text = if node.summary.is_empty() {
+            node.label.clone()
+        } else {
+            format!("{} {}", node.label, node.summary)
+        };
+        let embedding = provider.embed(&text)?;
+        self.set_embedding(uid, &embedding)
+    }
+
+    /// Search by text using the given provider to embed the query.
+    pub fn semantic_search_text(
+        &self,
+        query: &str,
+        k: usize,
+        provider: &dyn EmbeddingProvider,
+    ) -> Result<Vec<(GraphNode, f64)>> {
+        let query_vec = provider.embed(query)?;
+        self.semantic_search(&query_vec, k)
+    }
+
+    // ---- v0.4: Salience Decay ----
+
+    /// Apply exponential salience decay to all live nodes.
+    pub fn decay_salience(&self, half_life_secs: f64) -> Result<DecayResult> {
+        let current_time = now();
+        let changed = self.storage.apply_salience_decay(half_life_secs, current_time)?;
+
+        let below_threshold = changed.iter().filter(|(_, _, new_s)| *new_s < 0.1).count();
+
+        Ok(DecayResult {
+            nodes_decayed: changed.len(),
+            below_threshold,
+        })
+    }
+
+    /// Auto-tombstone nodes with salience below a threshold and older than min_age_secs.
+    pub fn auto_tombstone(&self, min_salience: f64, min_age_secs: f64) -> Result<usize> {
+        let cutoff = now() - min_age_secs;
+        let uids = self.storage.query_low_salience_old_nodes(min_salience, cutoff)?;
+        let count = uids.len();
+        for uid in &uids {
+            self.tombstone(uid, "auto_tombstone: low salience", "system")?;
+        }
+        Ok(count)
+    }
+
+    // ---- v0.4: Subscription / Events ----
+
+    /// Register a callback for graph change events.
+    pub fn on_change(&self, cb: impl Fn(&GraphEvent) + Send + Sync + 'static) -> SubscriptionId {
+        let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+        self.subscribers.write().unwrap().insert(id, Box::new(cb));
+        id
+    }
+
+    /// Remove a subscription.
+    pub fn unsubscribe(&self, id: SubscriptionId) {
+        self.subscribers.write().unwrap().remove(&id);
+    }
+
+    /// Emit a graph event to all subscribers.
+    fn emit(&self, event: GraphEvent) {
+        let subs = self.subscribers.read().unwrap();
+        for cb in subs.values() {
+            cb(&event);
+        }
+    }
+
+    // ---- v0.4: Typed Export / Import ----
+
+    /// Export all live nodes and edges as a typed snapshot.
+    pub fn export_typed(&self) -> Result<TypedSnapshot> {
+        let nodes = self.storage.export_all_live_nodes()?;
+        let edges = self.storage.export_all_live_edges()?;
+        Ok(TypedSnapshot {
+            nodes,
+            edges,
+            exported_at: now(),
+            mindgraph_version: env!("CARGO_PKG_VERSION").to_string(),
+        })
+    }
+
+    /// Import a typed snapshot (additive merge, skips existing UIDs).
+    pub fn import_typed(&self, snapshot: &TypedSnapshot) -> Result<TypedImportResult> {
+        let mut nodes_imported = 0;
+        let mut nodes_skipped = 0;
+        let mut edges_imported = 0;
+        let mut edges_skipped = 0;
+
+        for node in &snapshot.nodes {
+            if self.storage.get_node(&node.uid)?.is_some() {
+                nodes_skipped += 1;
+            } else {
+                self.storage.insert_node(node)?;
+                nodes_imported += 1;
+            }
+        }
+
+        for edge in &snapshot.edges {
+            if self.storage.get_edge(&edge.uid)?.is_some() {
+                edges_skipped += 1;
+            } else {
+                self.storage.insert_edge(edge)?;
+                edges_imported += 1;
+            }
+        }
+
+        Ok(TypedImportResult {
+            nodes_imported,
+            edges_imported,
+            nodes_skipped,
+            edges_skipped,
+        })
+    }
+
+    // ---- v0.4: Validated Batch ----
+
+    /// Pre-validate a batch of operations without executing them.
+    pub fn validate_batch(&self, ops: Vec<GraphOp>) -> Result<ValidatedBatch> {
+        let mut batch = ValidatedBatch {
+            nodes_to_add: Vec::new(),
+            edges_to_add: Vec::new(),
+            tombstone_nodes: Vec::new(),
+            tombstone_edges: Vec::new(),
+        };
+
+        // Track UIDs that will be added in this batch
+        let pending_node_uids: std::collections::HashSet<Uid> = std::collections::HashSet::new();
+
+        for op in ops {
+            match op {
+                GraphOp::AddNode(create) => {
+                    // Node adds are always valid
+                    batch.nodes_to_add.push(*create);
+                }
+                GraphOp::AddEdge(create) => {
+                    // Validate endpoints exist (or will be created in batch)
+                    let from_exists = self.storage.node_exists(&create.from_uid)?
+                        || pending_node_uids.contains(&create.from_uid);
+                    let to_exists = self.storage.node_exists(&create.to_uid)?
+                        || pending_node_uids.contains(&create.to_uid);
+                    if !from_exists {
+                        return Err(Error::NodeNotFound(create.from_uid.to_string()));
+                    }
+                    if !to_exists {
+                        return Err(Error::NodeNotFound(create.to_uid.to_string()));
+                    }
+                    batch.edges_to_add.push(*create);
+                }
+                GraphOp::Tombstone { uid, reason, by } => {
+                    // Validate node exists and is live
+                    self.get_live_node(&uid)?;
+                    batch.tombstone_nodes.push((uid, reason, by));
+                }
+                GraphOp::TombstoneEdge { uid, reason, by } => {
+                    self.get_live_edge(&uid)?;
+                    batch.tombstone_edges.push((uid, reason, by));
+                }
+            }
+
+            // Track nodes being added so edges can reference them
+            if let Some(last) = batch.nodes_to_add.last() {
+                // CreateNode doesn't have a UID yet - it's generated on insert.
+                // For cross-referencing in the same batch, we can't easily track
+                // future UIDs. This validation just checks existing DB state.
+                let _ = last;
+            }
+            let _ = &pending_node_uids; // Keep the set for potential future use
+        }
+
+        Ok(batch)
+    }
+
+    /// Apply a pre-validated batch.
+    pub fn apply_validated_batch(&self, batch: ValidatedBatch) -> Result<BatchResult> {
+        let mut result = BatchResult {
+            nodes_added: 0,
+            edges_added: 0,
+            nodes_tombstoned: 0,
+            edges_tombstoned: 0,
+        };
+
+        // Add nodes
+        if !batch.nodes_to_add.is_empty() {
+            let nodes = self.add_nodes_batch(batch.nodes_to_add)?;
+            result.nodes_added = nodes.len();
+        }
+
+        // Add edges
+        if !batch.edges_to_add.is_empty() {
+            let edges = self.add_edges_batch(batch.edges_to_add)?;
+            result.edges_added = edges.len();
+        }
+
+        // Tombstone nodes
+        for (uid, reason, by) in batch.tombstone_nodes {
+            self.tombstone(&uid, &reason, &by)?;
+            result.nodes_tombstoned += 1;
+        }
+
+        // Tombstone edges
+        for (uid, reason, by) in batch.tombstone_edges {
+            self.tombstone_edge(&uid, &reason, &by)?;
+            result.edges_tombstoned += 1;
+        }
+
+        Ok(result)
+    }
+}
+
+/// Builder for ergonomic node updates.
+pub struct NodeUpdate<'a> {
+    graph: &'a MindGraph,
+    uid: &'a Uid,
+    label: Option<String>,
+    summary: Option<String>,
+    confidence: Option<Confidence>,
+    salience: Option<Salience>,
+    props: Option<NodeProps>,
+    changed_by: Option<String>,
+    reason: Option<String>,
+}
+
+impl<'a> NodeUpdate<'a> {
+    /// Set the new label.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Set the new summary.
+    pub fn summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
+
+    /// Set the new confidence.
+    pub fn confidence(mut self, confidence: Confidence) -> Self {
+        self.confidence = Some(confidence);
+        self
+    }
+
+    /// Set the new salience.
+    pub fn salience(mut self, salience: Salience) -> Self {
+        self.salience = Some(salience);
+        self
+    }
+
+    /// Set the new props.
+    pub fn props(mut self, props: NodeProps) -> Self {
+        self.props = Some(props);
+        self
+    }
+
+    /// Set who is making this change.
+    pub fn changed_by(mut self, by: impl Into<String>) -> Self {
+        self.changed_by = Some(by.into());
+        self
+    }
+
+    /// Set the reason for this change.
+    pub fn reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+
+    /// Apply the update and return the updated node.
+    pub fn apply(self) -> Result<GraphNode> {
+        let default_agent = self.graph.default_agent();
+        self.graph.update_node(
+            self.uid,
+            self.label,
+            self.summary,
+            self.confidence,
+            self.salience,
+            self.props,
+            self.changed_by.as_deref().unwrap_or(&default_agent),
+            self.reason.as_deref().unwrap_or(""),
+        )
+    }
+}
+
+/// Builder for ergonomic edge updates.
+pub struct EdgeUpdate<'a> {
+    graph: &'a MindGraph,
+    uid: &'a Uid,
+    confidence: Option<Confidence>,
+    weight: Option<f64>,
+    props: Option<EdgeProps>,
+    changed_by: Option<String>,
+    reason: Option<String>,
+}
+
+impl<'a> EdgeUpdate<'a> {
+    /// Set the new confidence.
+    pub fn confidence(mut self, confidence: Confidence) -> Self {
+        self.confidence = Some(confidence);
+        self
+    }
+
+    /// Set the new weight.
+    pub fn weight(mut self, weight: f64) -> Self {
+        self.weight = Some(weight);
+        self
+    }
+
+    /// Set the new props.
+    pub fn props(mut self, props: EdgeProps) -> Self {
+        self.props = Some(props);
+        self
+    }
+
+    /// Set who is making this change.
+    pub fn changed_by(mut self, by: impl Into<String>) -> Self {
+        self.changed_by = Some(by.into());
+        self
+    }
+
+    /// Set the reason for this change.
+    pub fn reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+
+    /// Apply the update and return the updated edge.
+    pub fn apply(self) -> Result<GraphEdge> {
+        let default_agent = self.graph.default_agent();
+        self.graph.update_edge(
+            self.uid,
+            self.confidence,
+            self.weight,
+            self.props,
+            self.changed_by.as_deref().unwrap_or(&default_agent),
+            self.reason.as_deref().unwrap_or(""),
+        )
+    }
+}

@@ -5,7 +5,7 @@ use crate::schema::{Layer, NodeType};
 use crate::types::{Confidence, PrivacyLevel, Salience, Timestamp, Uid};
 
 /// A node in the knowledge graph.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GraphNode {
     pub uid: Uid,
     pub node_type: NodeType,
@@ -34,9 +34,13 @@ pub struct CreateNode {
     pub salience: Salience,
     pub privacy_level: PrivacyLevel,
     pub props: NodeProps,
+    /// Optional pre-assigned UID. If `None`, a new UID is generated on insert.
+    pub uid: Option<Uid>,
 }
 
 impl CreateNode {
+    /// Create a new node builder with a label and typed props.
+    /// The `node_type` and `layer` are inferred from the `NodeProps` variant.
     pub fn new(label: impl Into<String>, props: NodeProps) -> Self {
         CreateNode {
             label: label.into(),
@@ -45,24 +49,35 @@ impl CreateNode {
             salience: Salience::default(),
             privacy_level: PrivacyLevel::default(),
             props,
+            uid: None,
         }
     }
 
+    /// Pre-assign a UID for this node. Useful for cross-referencing in [`MindGraph::validate_batch`](crate::MindGraph::validate_batch).
+    pub fn with_uid(mut self, uid: Uid) -> Self {
+        self.uid = Some(uid);
+        self
+    }
+
+    /// Set the node summary text.
     pub fn summary(mut self, s: impl Into<String>) -> Self {
         self.summary = s.into();
         self
     }
 
+    /// Set the epistemic confidence (0.0–1.0, default 1.0).
     pub fn confidence(mut self, c: Confidence) -> Self {
         self.confidence = c;
         self
     }
 
+    /// Set the contextual salience (0.0–1.0, default 0.5).
     pub fn salience(mut self, s: Salience) -> Self {
         self.salience = s;
         self
     }
 
+    /// Set the privacy level (default `Private`).
     pub fn privacy(mut self, p: PrivacyLevel) -> Self {
         self.privacy_level = p;
         self

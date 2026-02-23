@@ -40,7 +40,7 @@ impl Default for TraversalOptions {
 }
 
 /// A single step in a traversal result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PathStep {
     /// UID of the reached node.
     pub node_uid: crate::types::Uid,

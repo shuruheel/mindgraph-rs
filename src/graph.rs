@@ -54,6 +54,13 @@ impl MindGraph {
     }
 
     /// Create an in-memory graph (for testing).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::MindGraph;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// ```
     pub fn open_in_memory() -> Result<Self> {
         let storage = CozoStorage::open_in_memory()?;
         let dim = storage.get_embedding_dimension()?;
@@ -73,12 +80,12 @@ impl MindGraph {
 
     /// Set the default agent identity for operations that don't specify one.
     pub fn set_default_agent(&self, name: impl Into<String>) {
-        *self.default_agent.write().unwrap() = name.into();
+        *self.default_agent.write().unwrap_or_else(|e| e.into_inner()) = name.into();
     }
 
     /// Get the current default agent identity.
     pub fn default_agent(&self) -> String {
-        self.default_agent.read().unwrap().clone()
+        self.default_agent.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Access the underlying storage for advanced queries.
@@ -89,13 +96,28 @@ impl MindGraph {
     // ---- Node Operations ----
 
     /// Add a new node to the graph.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// let node = graph.add_node(
+    ///     CreateNode::new("My entity", NodeProps::Entity(EntityProps {
+    ///         entity_type: "thing".into(),
+    ///         ..Default::default()
+    ///     }))
+    /// ).unwrap();
+    /// assert_eq!(node.node_type, NodeType::Entity);
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, create)))]
     pub fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
         let node_type = create.props.node_type();
         let layer = node_type.layer();
         let ts = now();
 
         let node = GraphNode {
-            uid: Uid::new(),
+            uid: create.uid.unwrap_or_default(),
             node_type,
             layer,
             label: create.label,
@@ -125,11 +147,13 @@ impl MindGraph {
     }
 
     /// Get a node by UID. Returns None if not found.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn get_node(&self, uid: &Uid) -> Result<Option<GraphNode>> {
         self.storage.get_node(uid)
     }
 
     /// Get a node by UID, returning an error if not found or tombstoned.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn get_live_node(&self, uid: &Uid) -> Result<GraphNode> {
         let node = self
             .storage
@@ -193,6 +217,21 @@ impl MindGraph {
     }
 
     /// Begin building an update for a node. Call `.apply()` to execute.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// let node = graph.add_entity("Alice", "person").unwrap();
+    /// let updated = graph.update(&node.uid)
+    ///     .label("Alice Smith")
+    ///     .reason("Added last name")
+    ///     .apply()
+    ///     .unwrap();
+    /// assert_eq!(updated.label, "Alice Smith");
+    /// assert_eq!(updated.version, 2);
+    /// ```
     pub fn update<'a>(&'a self, uid: &'a Uid) -> NodeUpdate<'a> {
         NodeUpdate {
             graph: self,
@@ -222,7 +261,22 @@ impl MindGraph {
 
     // ---- Edge Operations ----
 
-    /// Add a new edge to the graph.
+    /// Add a new edge to the graph. Validates that both endpoints are live.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// let a = graph.add_entity("A", "test").unwrap();
+    /// let b = graph.add_entity("B", "test").unwrap();
+    /// let edge = graph.add_edge(CreateEdge::new(
+    ///     a.uid.clone(), b.uid.clone(),
+    ///     EdgeProps::Supports { strength: Some(0.9), support_type: None },
+    /// )).unwrap();
+    /// assert_eq!(edge.edge_type, EdgeType::Supports);
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, create)))]
     pub fn add_edge(&self, create: CreateEdge) -> Result<GraphEdge> {
         let edge_type = create.props.edge_type();
         let ts = now();
@@ -327,6 +381,7 @@ impl MindGraph {
     // ---- Tombstone Operations ----
 
     /// Soft-delete a node.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn tombstone(&self, uid: &Uid, reason: &str, by: &str) -> Result<()> {
         let mut node = self.get_live_node(uid)?;
         node.tombstone_at = Some(now());
@@ -375,6 +430,9 @@ impl MindGraph {
     /// Soft-delete an edge.
     pub fn tombstone_edge(&self, uid: &Uid, reason: &str, by: &str) -> Result<()> {
         let mut edge = self.get_live_edge(uid)?;
+        let from_uid = edge.from_uid.clone();
+        let to_uid = edge.to_uid.clone();
+        let edge_type = edge.edge_type;
         edge.tombstone_at = Some(now());
         edge.version += 1;
         edge.updated_at = now();
@@ -385,7 +443,12 @@ impl MindGraph {
         self.storage
             .insert_edge_version(&edge.uid, edge.version, snapshot, by, "tombstone", reason)?;
 
-        self.emit(GraphEvent::EdgeTombstoned(uid.clone()));
+        self.emit(GraphEvent::EdgeTombstoned {
+            uid: uid.clone(),
+            from_uid,
+            to_uid,
+            edge_type,
+        });
 
         Ok(())
     }
@@ -415,6 +478,7 @@ impl MindGraph {
     }
 
     /// Tombstone a node and all its connected edges.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn tombstone_cascade(&self, uid: &Uid, reason: &str, by: &str) -> Result<TombstoneResult> {
         // First tombstone all connected edges
         let connected_edges = self.storage.query_edges_connected(uid)?;
@@ -584,6 +648,7 @@ impl MindGraph {
     // ---- Traversal ----
 
     /// Get all nodes reachable from a starting node.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, opts)))]
     pub fn reachable(&self, start: &Uid, opts: &TraversalOptions) -> Result<Vec<PathStep>> {
         self.storage
             .traverse_reachable(start, &opts.direction, &opts.edge_types, opts.max_depth, opts.weight_threshold)
@@ -591,6 +656,7 @@ impl MindGraph {
 
     /// Follow a reasoning chain from a claim node through epistemic edges (both directions).
     /// The first element is the starting node at depth 0.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn reasoning_chain(&self, claim_uid: &Uid, max_depth: u32) -> Result<Vec<PathStep>> {
         let start_node = self.get_live_node(claim_uid)?;
         let opts = TraversalOptions {
@@ -756,7 +822,7 @@ impl MindGraph {
             let ts = now();
 
             let node = GraphNode {
-                uid: Uid::new(),
+                uid: create.uid.unwrap_or_default(),
                 node_type,
                 layer,
                 label: create.label,
@@ -861,6 +927,17 @@ impl MindGraph {
     // ---- Full-Text Search ----
 
     /// Search nodes by text query using full-text search indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// graph.add_claim("Rust is fast", "native compilation", 0.9).unwrap();
+    /// let results = graph.search("fast", &SearchOptions::new()).unwrap();
+    /// assert_eq!(results.len(), 1);
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, opts)))]
     pub fn search(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
         self.storage.query_fts_search(query, opts)
     }
@@ -868,6 +945,20 @@ impl MindGraph {
     // ---- Structured Filtering ----
 
     /// Find nodes matching structured filter criteria.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// graph.add_entity("Alice", "person").unwrap();
+    /// graph.add_entity("Bob", "person").unwrap();
+    /// graph.add_claim("Sky is blue", "color", 0.9).unwrap();
+    /// let filter = NodeFilter { node_type: Some(NodeType::Entity), ..Default::default() };
+    /// let results = graph.find_nodes(&filter).unwrap();
+    /// assert_eq!(results.len(), 2);
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, filter)))]
     pub fn find_nodes(&self, filter: &NodeFilter) -> Result<Vec<GraphNode>> {
         let mut results = {
             let (nodes, _has_more) = self.storage.query_nodes_filtered(filter)?;
@@ -956,6 +1047,7 @@ impl MindGraph {
 
     /// Merge two entities: retarget all edges and aliases from `merge_uid` to `keep_uid`,
     /// then tombstone the merged entity.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn merge_entities(
         &self,
         keep_uid: &Uid,
@@ -993,6 +1085,7 @@ impl MindGraph {
     // ---- Batch Operations (GraphOp) ----
 
     /// Execute a batch of graph operations atomically.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, ops)))]
     pub fn batch_apply(&self, ops: Vec<GraphOp>) -> Result<BatchResult> {
         let mut result = BatchResult {
             nodes_added: 0,
@@ -1028,6 +1121,18 @@ impl MindGraph {
     // ---- v0.4: Stats ----
 
     /// Get graph-wide statistics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// graph.add_entity("A", "test").unwrap();
+    /// graph.add_entity("B", "test").unwrap();
+    /// let stats = graph.stats().unwrap();
+    /// assert_eq!(stats.total_nodes, 2);
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn stats(&self) -> Result<GraphStats> {
         let dim = self.embedding_dimension();
         self.storage.query_stats(dim)
@@ -1036,6 +1141,15 @@ impl MindGraph {
     // ---- v0.4: Convenience Constructors ----
 
     /// Add a claim node with content and confidence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// let claim = graph.add_claim("Earth is round", "spherical shape", 0.99).unwrap();
+    /// assert_eq!(claim.node_type, NodeType::Claim);
+    /// ```
     pub fn add_claim(&self, label: &str, content: &str, confidence: f64) -> Result<GraphNode> {
         use crate::schema::props::epistemic::ClaimProps;
         self.add_node(
@@ -1048,6 +1162,16 @@ impl MindGraph {
     }
 
     /// Add an entity node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mindgraph::*;
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// let entity = graph.add_entity("Rust", "language").unwrap();
+    /// assert_eq!(entity.node_type, NodeType::Entity);
+    /// assert_eq!(entity.label, "Rust");
+    /// ```
     pub fn add_entity(&self, label: &str, entity_type: &str) -> Result<GraphNode> {
         use crate::schema::props::reality::EntityProps;
         self.add_node(CreateNode::new(label, NodeProps::Entity(EntityProps {
@@ -1079,11 +1203,41 @@ impl MindGraph {
     }
 
     /// Add a memory (session) node.
+    #[deprecated(since = "0.4.1", note = "Use add_session() instead")]
     pub fn add_memory(&self, label: &str, content: &str) -> Result<GraphNode> {
+        self.add_session(label, content)
+    }
+
+    /// Add a session node.
+    pub fn add_session(&self, label: &str, focus: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::SessionProps;
         self.add_node(
             CreateNode::new(label, NodeProps::Session(SessionProps {
-                focus_summary: Some(content.to_string()),
+                focus_summary: Some(focus.to_string()),
+                ..Default::default()
+            }))
+            .summary(focus),
+        )
+    }
+
+    /// Add a preference node.
+    pub fn add_preference(&self, label: &str, key: &str, value: &str) -> Result<GraphNode> {
+        use crate::schema::props::memory::PreferenceProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Preference(PreferenceProps {
+                key: key.to_string(),
+                value: value.to_string(),
+                ..Default::default()
+            })),
+        )
+    }
+
+    /// Add a summary node.
+    pub fn add_summary(&self, label: &str, content: &str) -> Result<GraphNode> {
+        use crate::schema::props::memory::SummaryProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Summary(SummaryProps {
+                content: content.to_string(),
                 ..Default::default()
             }))
             .summary(content),
@@ -1115,13 +1269,13 @@ impl MindGraph {
             });
         }
         self.storage.create_embedding_schema(dimension)?;
-        *self.embedding_dim.write().unwrap() = Some(dimension);
+        *self.embedding_dim.write().unwrap_or_else(|e| e.into_inner()) = Some(dimension);
         Ok(())
     }
 
     /// Get the configured embedding dimension, if any.
     pub fn embedding_dimension(&self) -> Option<usize> {
-        *self.embedding_dim.read().unwrap()
+        *self.embedding_dim.read().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Set the embedding vector for a node.
@@ -1155,19 +1309,41 @@ impl MindGraph {
 
     /// Search for semantically similar nodes using a query vector.
     /// Returns (node, distance) pairs sorted by distance ascending.
+    /// Automatically over-fetches and retries to compensate for tombstoned nodes.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, query_vec)))]
     pub fn semantic_search(&self, query_vec: &[f32], k: usize) -> Result<Vec<(GraphNode, f64)>> {
         if self.embedding_dimension().is_none() {
             return Err(Error::EmbeddingNotConfigured);
         }
-        let raw = self.storage.semantic_search_raw(query_vec, k, k * 2)?;
+
+        let max_fetch = k * 10;
+        let mut fetch_size = k * 2;
         let mut results = Vec::new();
-        for (uid, dist) in raw {
-            if let Some(node) = self.storage.get_node(&uid)? {
-                if node.tombstone_at.is_none() {
-                    results.push((node, dist));
+
+        loop {
+            let raw = self.storage.semantic_search_raw(query_vec, fetch_size, fetch_size)?;
+            let raw_len = raw.len();
+            results.clear();
+            for (uid, dist) in raw {
+                if let Some(node) = self.storage.get_node(&uid)? {
+                    if node.tombstone_at.is_none() {
+                        results.push((node, dist));
+                        if results.len() >= k {
+                            break;
+                        }
+                    }
                 }
             }
+
+            // If we have enough results, or HNSW didn't return a full batch, stop
+            if results.len() >= k || raw_len < fetch_size || fetch_size >= max_fetch {
+                break;
+            }
+
+            fetch_size = (fetch_size * 2).min(max_fetch);
         }
+
+        results.truncate(k);
         Ok(results)
     }
 
@@ -1181,6 +1357,41 @@ impl MindGraph {
         };
         let embedding = provider.embed(&text)?;
         self.set_embedding(uid, &embedding)
+    }
+
+    /// Embed multiple nodes' label+summary text using the given provider.
+    /// Skips tombstoned nodes. Returns the count of nodes successfully embedded.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, uids, provider)))]
+    pub fn embed_nodes(&self, uids: &[Uid], provider: &dyn EmbeddingProvider) -> Result<usize> {
+        let mut texts = Vec::new();
+        let mut live_uids = Vec::new();
+
+        for uid in uids {
+            if let Some(node) = self.storage.get_node(uid)? {
+                if node.tombstone_at.is_none() {
+                    let text = if node.summary.is_empty() {
+                        node.label.clone()
+                    } else {
+                        format!("{} {}", node.label, node.summary)
+                    };
+                    texts.push(text);
+                    live_uids.push(uid.clone());
+                }
+            }
+        }
+
+        if texts.is_empty() {
+            return Ok(0);
+        }
+
+        let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let embeddings = provider.embed_batch(&text_refs)?;
+
+        for (uid, embedding) in live_uids.iter().zip(embeddings.iter()) {
+            self.set_embedding(uid, embedding)?;
+        }
+
+        Ok(live_uids.len())
     }
 
     /// Search by text using the given provider to embed the query.
@@ -1197,6 +1408,7 @@ impl MindGraph {
     // ---- v0.4: Salience Decay ----
 
     /// Apply exponential salience decay to all live nodes.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn decay_salience(&self, half_life_secs: f64) -> Result<DecayResult> {
         let current_time = now();
         let changed = self.storage.apply_salience_decay(half_life_secs, current_time)?;
@@ -1225,18 +1437,18 @@ impl MindGraph {
     /// Register a callback for graph change events.
     pub fn on_change(&self, cb: impl Fn(&GraphEvent) + Send + Sync + 'static) -> SubscriptionId {
         let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-        self.subscribers.write().unwrap().insert(id, Box::new(cb));
+        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).insert(id, Box::new(cb));
         id
     }
 
     /// Remove a subscription.
     pub fn unsubscribe(&self, id: SubscriptionId) {
-        self.subscribers.write().unwrap().remove(&id);
+        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
 
     /// Emit a graph event to all subscribers.
     fn emit(&self, event: GraphEvent) {
-        let subs = self.subscribers.read().unwrap();
+        let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
         for cb in subs.values() {
             cb(&event);
         }
@@ -1244,13 +1456,15 @@ impl MindGraph {
 
     // ---- v0.4: Typed Export / Import ----
 
-    /// Export all live nodes and edges as a typed snapshot.
+    /// Export all live nodes and edges as a typed snapshot, including embeddings.
     pub fn export_typed(&self) -> Result<TypedSnapshot> {
         let nodes = self.storage.export_all_live_nodes()?;
         let edges = self.storage.export_all_live_edges()?;
+        let embeddings = self.storage.export_all_embeddings()?;
         Ok(TypedSnapshot {
             nodes,
             edges,
+            embeddings,
             exported_at: now(),
             mindgraph_version: env!("CARGO_PKG_VERSION").to_string(),
         })
@@ -1262,6 +1476,7 @@ impl MindGraph {
         let mut nodes_skipped = 0;
         let mut edges_imported = 0;
         let mut edges_skipped = 0;
+        let mut embeddings_imported = 0;
 
         for node in &snapshot.nodes {
             if self.storage.get_node(&node.uid)?.is_some() {
@@ -1281,17 +1496,31 @@ impl MindGraph {
             }
         }
 
+        // Import embeddings if present and dimension matches
+        if !snapshot.embeddings.is_empty() {
+            if let Some(dim) = self.embedding_dimension() {
+                for (uid, vec) in &snapshot.embeddings {
+                    if vec.len() == dim {
+                        self.storage.upsert_embedding(uid, vec)?;
+                        embeddings_imported += 1;
+                    }
+                }
+            }
+        }
+
         Ok(TypedImportResult {
             nodes_imported,
             edges_imported,
             nodes_skipped,
             edges_skipped,
+            embeddings_imported,
         })
     }
 
     // ---- v0.4: Validated Batch ----
 
     /// Pre-validate a batch of operations without executing them.
+    /// `CreateNode` ops without a pre-assigned UID will have one assigned automatically.
     pub fn validate_batch(&self, ops: Vec<GraphOp>) -> Result<ValidatedBatch> {
         let mut batch = ValidatedBatch {
             nodes_to_add: Vec::new(),
@@ -1301,12 +1530,16 @@ impl MindGraph {
         };
 
         // Track UIDs that will be added in this batch
-        let pending_node_uids: std::collections::HashSet<Uid> = std::collections::HashSet::new();
+        let mut pending_node_uids: std::collections::HashSet<Uid> = std::collections::HashSet::new();
 
         for op in ops {
             match op {
-                GraphOp::AddNode(create) => {
-                    // Node adds are always valid
+                GraphOp::AddNode(mut create) => {
+                    // Assign a UID if not already set, so edges can reference it
+                    if create.uid.is_none() {
+                        create.uid = Some(Uid::new());
+                    }
+                    pending_node_uids.insert(create.uid.clone().unwrap());
                     batch.nodes_to_add.push(*create);
                 }
                 GraphOp::AddEdge(create) => {
@@ -1333,15 +1566,6 @@ impl MindGraph {
                     batch.tombstone_edges.push((uid, reason, by));
                 }
             }
-
-            // Track nodes being added so edges can reference them
-            if let Some(last) = batch.nodes_to_add.last() {
-                // CreateNode doesn't have a UID yet - it's generated on insert.
-                // For cross-referencing in the same batch, we can't easily track
-                // future UIDs. This validation just checks existing DB state.
-                let _ = last;
-            }
-            let _ = &pending_node_uids; // Keep the set for potential future use
         }
 
         Ok(batch)
@@ -1381,6 +1605,36 @@ impl MindGraph {
         }
 
         Ok(result)
+    }
+
+    // ---- v0.5: New Methods ----
+
+    /// Get live edges between two specific nodes, optionally filtered by edge type.
+    pub fn get_edge_between(
+        &self,
+        from_uid: &Uid,
+        to_uid: &Uid,
+        edge_type: Option<EdgeType>,
+    ) -> Result<Vec<GraphEdge>> {
+        self.storage.query_edges_between(from_uid, to_uid, edge_type)
+    }
+
+    /// List all live nodes with pagination.
+    pub fn list_nodes(&self, page: Pagination) -> Result<Page<GraphNode>> {
+        let (items, has_more) = self.storage.query_all_live_nodes_paginated(page.limit, page.offset)?;
+        Ok(Page {
+            items,
+            offset: page.offset,
+            limit: page.limit,
+            has_more,
+        })
+    }
+
+    /// Delete all data from the graph. **Destructive operation** intended for testing and reset.
+    pub fn clear(&self) -> Result<()> {
+        self.storage.clear_all()?;
+        *self.embedding_dim.write().unwrap_or_else(|e| e.into_inner()) = None;
+        Ok(())
     }
 }
 

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -35,10 +36,16 @@ pub struct WeakClaim {
 }
 
 /// Pagination parameters.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Pagination {
     pub limit: u32,
     pub offset: u32,
+}
+
+impl Default for Pagination {
+    fn default() -> Self {
+        Pagination { limit: 100, offset: 0 }
+    }
 }
 
 impl Pagination {
@@ -49,7 +56,8 @@ impl Pagination {
 }
 
 /// A paginated result set.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
 pub struct Page<T> {
     pub items: Vec<T>,
     pub offset: u32,
@@ -58,10 +66,16 @@ pub struct Page<T> {
 }
 
 /// Result of a tombstone cascade operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TombstoneResult {
     /// Number of edges that were tombstoned as part of the cascade.
     pub edges_tombstoned: usize,
+}
+
+impl fmt::Display for TombstoneResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TombstoneResult {{ edges_tombstoned: {} }}", self.edges_tombstoned)
+    }
 }
 
 /// A version history record for a node or edge.
@@ -78,7 +92,7 @@ pub struct VersionRecord {
 // ==== Phase 1: Search & Filter Types ====
 
 /// Options for full-text search.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchOptions {
     /// Filter results to a specific node type.
     pub node_type: Option<NodeType>,
@@ -102,10 +116,12 @@ impl SearchOptions {
 }
 
 /// Structured filter for finding nodes.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NodeFilter {
     /// Filter by node type.
     pub node_type: Option<NodeType>,
+    /// Filter by multiple node types (OR). Takes precedence over `node_type` if both set.
+    pub node_types: Option<Vec<NodeType>>,
     /// Filter by layer.
     pub layer: Option<Layer>,
     /// Substring match on the label field.
@@ -147,6 +163,11 @@ impl NodeFilter {
 
     pub fn node_type(mut self, nt: NodeType) -> Self {
         self.node_type = Some(nt);
+        self
+    }
+
+    pub fn node_types(mut self, types: Vec<NodeType>) -> Self {
+        self.node_types = Some(types);
         self
     }
 
@@ -211,11 +232,21 @@ impl NodeFilter {
 // ==== Phase 2: Data Lifecycle Types ====
 
 /// Result of a purge operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PurgeResult {
     pub nodes_purged: usize,
     pub edges_purged: usize,
     pub versions_purged: usize,
+}
+
+impl fmt::Display for PurgeResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PurgeResult {{ nodes: {}, edges: {}, versions: {} }}",
+            self.nodes_purged, self.edges_purged, self.versions_purged
+        )
+    }
 }
 
 /// A snapshot of the entire graph for export/import.
@@ -227,21 +258,38 @@ pub struct GraphSnapshot {
 }
 
 /// Result of an import operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportResult {
     pub relations_imported: usize,
+}
+
+impl fmt::Display for ImportResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ImportResult {{ relations_imported: {} }}", self.relations_imported)
+    }
 }
 
 // ==== Phase 4: Entity Resolution & Batch Types ====
 
 /// Result of merging two entities.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeResult {
     pub edges_retargeted: usize,
     pub aliases_merged: usize,
 }
 
+impl fmt::Display for MergeResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MergeResult {{ edges_retargeted: {}, aliases_merged: {} }}",
+            self.edges_retargeted, self.aliases_merged
+        )
+    }
+}
+
 /// A single operation in a batch.
+#[derive(Debug)]
 pub enum GraphOp {
     AddNode(Box<CreateNode>),
     AddEdge(Box<CreateEdge>),
@@ -250,12 +298,22 @@ pub enum GraphOp {
 }
 
 /// Result of a batch operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchResult {
     pub nodes_added: usize,
     pub edges_added: usize,
     pub nodes_tombstoned: usize,
     pub edges_tombstoned: usize,
+}
+
+impl fmt::Display for BatchResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "BatchResult {{ +{} nodes, +{} edges, -{} nodes, -{} edges }}",
+            self.nodes_added, self.edges_added, self.nodes_tombstoned, self.edges_tombstoned
+        )
+    }
 }
 
 // ==== v0.4 Types ====
@@ -278,22 +336,44 @@ pub struct GraphStats {
     pub embedding_dimension: Option<usize>,
 }
 
+impl fmt::Display for GraphStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "GraphStats {{ nodes: {}/{} live, edges: {}/{} live, versions: {}, aliases: {}, embeddings: {} }}",
+            self.live_nodes, self.total_nodes,
+            self.live_edges, self.total_edges,
+            self.total_versions, self.total_aliases, self.embedding_count
+        )
+    }
+}
+
 /// Result of a salience decay operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecayResult {
     pub nodes_decayed: usize,
     pub below_threshold: usize,
 }
 
+impl fmt::Display for DecayResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DecayResult {{ decayed: {}, below_threshold: {} }}",
+            self.nodes_decayed, self.below_threshold
+        )
+    }
+}
+
 /// A property filter condition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PropCondition {
     pub field: String,
     pub op: PropOp,
 }
 
 /// Property filter operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PropOp {
     Equals(String),
     NotEquals(String),
@@ -308,17 +388,32 @@ pub enum PropOp {
 pub struct TypedSnapshot {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+    #[serde(default)]
+    pub embeddings: Vec<(Uid, Vec<f32>)>,
     pub exported_at: Timestamp,
     pub mindgraph_version: String,
 }
 
 /// Result of a typed import operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedImportResult {
     pub nodes_imported: usize,
     pub edges_imported: usize,
     pub nodes_skipped: usize,
     pub edges_skipped: usize,
+    pub embeddings_imported: usize,
+}
+
+impl fmt::Display for TypedImportResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TypedImportResult {{ nodes: +{}/{} skipped, edges: +{}/{} skipped, embeddings: {} }}",
+            self.nodes_imported, self.nodes_skipped,
+            self.edges_imported, self.edges_skipped,
+            self.embeddings_imported
+        )
+    }
 }
 
 /// A pre-validated batch of operations.

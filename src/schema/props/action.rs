@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AffordanceProps {
     pub action_name: String,
@@ -32,7 +32,7 @@ impl Default for AffordanceProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct FlowProps {
     pub name: String,
@@ -43,7 +43,7 @@ pub struct FlowProps {
     pub overall_risk: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct FlowStepProps {
     pub order: u32,
@@ -54,7 +54,7 @@ pub struct FlowStepProps {
     pub fallback_description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ControlProps {
     pub control_type: String,
@@ -78,7 +78,7 @@ impl Default for ControlProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RiskAssessmentProps {
     pub target_uid: Option<String>,

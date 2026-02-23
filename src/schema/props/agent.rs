@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AgentProps {
     pub name: String,
@@ -13,7 +13,7 @@ pub struct AgentProps {
     pub domain_restrictions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct TaskProps {
     pub description: String,
@@ -28,7 +28,7 @@ pub struct TaskProps {
     pub result_summary: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PlanProps {
     pub description: String,
@@ -41,7 +41,7 @@ pub struct PlanProps {
     pub approved_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PlanStepProps {
     pub order: u32,
@@ -54,7 +54,7 @@ pub struct PlanStepProps {
     pub requires_approval: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ApprovalProps {
     pub target_uid: Option<String>,
@@ -67,7 +67,7 @@ pub struct ApprovalProps {
     pub conditions: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PolicyProps {
     pub name: String,
@@ -93,7 +93,7 @@ impl Default for PolicyProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExecutionProps {
     pub description: String,
@@ -131,7 +131,7 @@ impl Default for ExecutionProps {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SafetyBudgetProps {
     pub scope: Option<String>,

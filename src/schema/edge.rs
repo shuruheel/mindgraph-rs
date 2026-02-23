@@ -5,7 +5,7 @@ use crate::schema::{EdgeType, Layer};
 use crate::types::{Confidence, Timestamp, Uid};
 
 /// An edge in the knowledge graph.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GraphEdge {
     pub uid: Uid,
     pub from_uid: Uid,
@@ -32,6 +32,8 @@ pub struct CreateEdge {
 }
 
 impl CreateEdge {
+    /// Create a new edge builder between two nodes with typed props.
+    /// The `edge_type` is inferred from the `EdgeProps` variant.
     pub fn new(from: Uid, to: Uid, props: EdgeProps) -> Self {
         CreateEdge {
             from_uid: from,
@@ -42,11 +44,13 @@ impl CreateEdge {
         }
     }
 
+    /// Set the epistemic confidence (0.0–1.0, default 1.0).
     pub fn confidence(mut self, c: Confidence) -> Self {
         self.confidence = c;
         self
     }
 
+    /// Set the edge weight (default 0.5).
     pub fn weight(mut self, w: f64) -> Self {
         self.weight = w;
         self

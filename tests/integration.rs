@@ -2233,3 +2233,484 @@ fn test_validated_batch_fails_on_missing_node() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
 }
+
+// ==== v0.4.1 Tests ====
+
+// ---- Issue 9: Display impls ----
+
+#[test]
+fn test_display_graph_event() {
+    let g = mem_graph();
+    let node = g.add_claim("Test claim", "content", 0.9).unwrap();
+    let event = GraphEvent::NodeAdded(Box::new(node.clone()));
+    let s = format!("{}", event);
+    assert!(s.starts_with("NodeAdded("));
+    assert!(s.contains("Test claim"));
+
+    let event2 = GraphEvent::NodeUpdated { uid: node.uid.clone(), version: 2 };
+    let s2 = format!("{}", event2);
+    assert!(s2.starts_with("NodeUpdated("));
+    assert!(s2.contains("v2"));
+
+    let event3 = GraphEvent::NodeTombstoned(node.uid.clone());
+    let s3 = format!("{}", event3);
+    assert!(s3.starts_with("NodeTombstoned("));
+
+    let edge = g.add_claim("B", "b", 0.8).unwrap();
+    let e = g.add_link(&node.uid, &edge.uid, EdgeType::Supports).unwrap();
+    let event4 = GraphEvent::EdgeAdded(Box::new(e.clone()));
+    let s4 = format!("{}", event4);
+    assert!(s4.starts_with("EdgeAdded("));
+    assert!(s4.contains("SUPPORTS"));
+
+    let event5 = GraphEvent::EdgeTombstoned {
+        uid: e.uid.clone(),
+        from_uid: node.uid.clone(),
+        to_uid: edge.uid.clone(),
+        edge_type: EdgeType::Supports,
+    };
+    let s5 = format!("{}", event5);
+    assert!(s5.starts_with("EdgeTombstoned("));
+    assert!(s5.contains("SUPPORTS"));
+}
+
+#[test]
+fn test_display_graph_stats() {
+    let g = mem_graph();
+    g.add_claim("A", "a", 0.9).unwrap();
+    let stats = g.stats().unwrap();
+    let s = format!("{}", stats);
+    assert!(s.starts_with("GraphStats {"));
+    assert!(s.contains("nodes:"));
+    assert!(s.contains("edges:"));
+}
+
+#[test]
+fn test_display_decay_result() {
+    let result = DecayResult { nodes_decayed: 10, below_threshold: 2 };
+    let s = format!("{}", result);
+    assert_eq!(s, "DecayResult { decayed: 10, below_threshold: 2 }");
+}
+
+#[test]
+fn test_display_batch_result() {
+    let result = BatchResult {
+        nodes_added: 3, edges_added: 2, nodes_tombstoned: 1, edges_tombstoned: 0,
+    };
+    let s = format!("{}", result);
+    assert_eq!(s, "BatchResult { +3 nodes, +2 edges, -1 nodes, -0 edges }");
+}
+
+// ---- Issue 7: Rich EdgeTombstoned event ----
+
+#[test]
+fn test_edge_tombstoned_event_rich() {
+    let g = mem_graph();
+    let events: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+
+    g.on_change(move |event| {
+        events_clone.lock().unwrap().push(format!("{:?}", event));
+    });
+
+    let c1 = g.add_claim("A", "a", 0.9).unwrap();
+    let c2 = g.add_claim("B", "b", 0.8).unwrap();
+    let edge = g.add_link(&c1.uid, &c2.uid, EdgeType::Supports).unwrap();
+    g.tombstone_edge(&edge.uid, "test", "tester").unwrap();
+
+    let evts = events.lock().unwrap();
+    let last = evts.last().unwrap();
+    assert!(last.contains("EdgeTombstoned"));
+    assert!(last.contains("from_uid"));
+    assert!(last.contains("to_uid"));
+    assert!(last.contains("edge_type: Supports"));
+}
+
+// ---- Issue 6: Multi-type NodeFilter ----
+
+#[test]
+fn test_find_nodes_multi_type() {
+    let g = mem_graph();
+    g.add_claim("Claim A", "a", 0.9).unwrap();
+    g.add_entity("Entity B", "person").unwrap();
+    g.add_goal("Goal C", "high").unwrap();
+
+    let results = g.find_nodes(&NodeFilter::new().node_types(vec![NodeType::Claim, NodeType::Entity])).unwrap();
+    assert_eq!(results.len(), 2);
+    let types: Vec<NodeType> = results.iter().map(|n| n.node_type).collect();
+    assert!(types.contains(&NodeType::Claim));
+    assert!(types.contains(&NodeType::Entity));
+}
+
+#[test]
+fn test_find_nodes_multi_type_with_single_still_works() {
+    let g = mem_graph();
+    g.add_claim("Claim A", "a", 0.9).unwrap();
+    g.add_entity("Entity B", "person").unwrap();
+
+    // Single node_type still works
+    let results = g.find_nodes(&NodeFilter::new().node_type(NodeType::Claim)).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].node_type, NodeType::Claim);
+
+    // node_types takes precedence over node_type
+    let filter = NodeFilter {
+        node_type: Some(NodeType::Claim),
+        node_types: Some(vec![NodeType::Entity]),
+        ..Default::default()
+    };
+    let results2 = g.find_nodes(&filter).unwrap();
+    assert_eq!(results2.len(), 1);
+    assert_eq!(results2[0].node_type, NodeType::Entity);
+}
+
+// ---- Issue 5: Batch salience decay ----
+
+#[test]
+fn test_decay_salience_many_nodes() {
+    let g = mem_graph();
+    // Create 200 nodes
+    let creates: Vec<CreateNode> = (0..200)
+        .map(|i| {
+            CreateNode::new(
+                format!("Node {}", i),
+                NodeProps::Claim(ClaimProps {
+                    content: format!("Content {}", i),
+                    ..Default::default()
+                }),
+            )
+            .salience(Salience::new(0.8).unwrap())
+        })
+        .collect();
+    g.add_nodes_batch(creates).unwrap();
+
+    // Give some elapsed time by using a large half-life
+    let result = g.decay_salience(1.0).unwrap();
+    assert!(result.nodes_decayed > 0);
+}
+
+// ---- Issue 1: validate_batch cross-reference ----
+
+#[test]
+fn test_validate_batch_cross_reference() {
+    let g = mem_graph();
+    let node_uid = Uid::new();
+
+    let ops = vec![
+        GraphOp::AddNode(Box::new(
+            CreateNode::new("Cross-ref node", NodeProps::Claim(ClaimProps {
+                content: "test".into(),
+                ..Default::default()
+            }))
+            .with_uid(node_uid.clone()),
+        )),
+        GraphOp::AddEdge(Box::new(CreateEdge::new(
+            node_uid.clone(),
+            node_uid.clone(), // self-referencing for simplicity
+            EdgeProps::Supports { strength: None, support_type: None },
+        ))),
+    ];
+
+    let batch = g.validate_batch(ops).unwrap();
+    let result = g.apply_validated_batch(batch).unwrap();
+    assert_eq!(result.nodes_added, 1);
+    assert_eq!(result.edges_added, 1);
+
+    // Verify the node got the pre-assigned UID
+    let node = g.get_node(&node_uid).unwrap();
+    assert!(node.is_some());
+    assert_eq!(node.unwrap().label, "Cross-ref node");
+}
+
+#[test]
+fn test_create_node_with_uid() {
+    let g = mem_graph();
+    let uid = Uid::new();
+    let node = g.add_node(
+        CreateNode::new("Pre-UID node", NodeProps::Entity(EntityProps {
+            entity_type: "test".into(),
+            ..Default::default()
+        }))
+        .with_uid(uid.clone()),
+    ).unwrap();
+
+    assert_eq!(node.uid, uid);
+    let fetched = g.get_node(&uid).unwrap().unwrap();
+    assert_eq!(fetched.label, "Pre-UID node");
+}
+
+// ---- Issue 2: Memory constructors ----
+
+#[test]
+fn test_add_session() {
+    let g = mem_graph();
+    let node = g.add_session("Morning session", "Reviewing PRs").unwrap();
+    assert_eq!(node.node_type, NodeType::Session);
+    assert_eq!(node.layer, Layer::Memory);
+    assert_eq!(node.summary, "Reviewing PRs");
+}
+
+#[test]
+fn test_add_preference() {
+    let g = mem_graph();
+    let node = g.add_preference("Dark mode preference", "theme", "dark").unwrap();
+    assert_eq!(node.node_type, NodeType::Preference);
+    assert_eq!(node.layer, Layer::Memory);
+    match &node.props {
+        NodeProps::Preference(p) => {
+            assert_eq!(p.key, "theme");
+            assert_eq!(p.value, "dark");
+        }
+        _ => panic!("Expected Preference props"),
+    }
+}
+
+#[test]
+fn test_add_summary() {
+    let g = mem_graph();
+    let node = g.add_summary("Session summary", "Discussed architecture decisions").unwrap();
+    assert_eq!(node.node_type, NodeType::Summary);
+    assert_eq!(node.layer, Layer::Memory);
+    assert_eq!(node.summary, "Discussed architecture decisions");
+}
+
+// ---- Issue 4: semantic_search tombstone compensation ----
+
+#[test]
+fn test_semantic_search_enough_results_with_tombstoned() {
+    let g = mem_graph();
+    g.configure_embeddings(3).unwrap();
+
+    // Create 10 nodes with embeddings
+    let mut uids = Vec::new();
+    for i in 0..10 {
+        let node = g.add_claim(&format!("Claim {}", i), &format!("content {}", i), 0.9).unwrap();
+        let emb = vec![i as f32 * 0.1, 0.5, 0.5];
+        g.set_embedding(&node.uid, &emb).unwrap();
+        uids.push(node.uid);
+    }
+
+    // Tombstone 5 of them
+    for uid in &uids[0..5] {
+        g.tombstone(uid, "test", "tester").unwrap();
+    }
+
+    // Search for k=3 — should get exactly 3 live nodes
+    let query_vec = vec![0.5, 0.5, 0.5];
+    let results = g.semantic_search(&query_vec, 3).unwrap();
+    assert_eq!(results.len(), 3);
+    // All results should be live
+    for (node, _dist) in &results {
+        assert!(node.tombstone_at.is_none());
+    }
+}
+
+// ---- Issue 3: embed_nodes batch ----
+
+struct TestEmbedder;
+impl EmbeddingProvider for TestEmbedder {
+    fn dimension(&self) -> usize { 3 }
+    fn embed(&self, text: &str) -> mindgraph::Result<Vec<f32>> {
+        Ok(vec![text.len() as f32 * 0.01, 0.5, 0.5])
+    }
+}
+
+#[test]
+fn test_embed_nodes_batch() {
+    let g = mem_graph();
+    g.configure_embeddings(3).unwrap();
+
+    let c1 = g.add_claim("Alpha", "first", 0.9).unwrap();
+    let c2 = g.add_claim("Beta", "second", 0.8).unwrap();
+
+    let provider = TestEmbedder;
+    let count = g.embed_nodes(&[c1.uid.clone(), c2.uid.clone()], &provider).unwrap();
+    assert_eq!(count, 2);
+
+    // Verify embeddings were stored
+    let emb1 = g.get_embedding(&c1.uid).unwrap().unwrap();
+    assert_eq!(emb1.len(), 3);
+    let emb2 = g.get_embedding(&c2.uid).unwrap().unwrap();
+    assert_eq!(emb2.len(), 3);
+}
+
+#[test]
+fn test_embed_nodes_skips_tombstoned() {
+    let g = mem_graph();
+    g.configure_embeddings(3).unwrap();
+
+    let c1 = g.add_claim("Live", "content", 0.9).unwrap();
+    let c2 = g.add_claim("Dead", "content", 0.8).unwrap();
+    g.tombstone(&c2.uid, "done", "test").unwrap();
+
+    let provider = TestEmbedder;
+    let count = g.embed_nodes(&[c1.uid.clone(), c2.uid.clone()], &provider).unwrap();
+    assert_eq!(count, 1); // Only the live node
+}
+
+// ---- Issue 10: TypedSnapshot embeddings ----
+
+#[test]
+fn test_typed_export_includes_embeddings() {
+    let g = mem_graph();
+    g.configure_embeddings(3).unwrap();
+
+    let c1 = g.add_claim("A", "a", 0.9).unwrap();
+    g.set_embedding(&c1.uid, &[0.1, 0.2, 0.3]).unwrap();
+
+    let snapshot = g.export_typed().unwrap();
+    assert_eq!(snapshot.nodes.len(), 1);
+    assert_eq!(snapshot.embeddings.len(), 1);
+    assert_eq!(snapshot.embeddings[0].0, c1.uid);
+    assert_eq!(snapshot.embeddings[0].1.len(), 3);
+}
+
+#[test]
+fn test_typed_import_restores_embeddings() {
+    let g1 = mem_graph();
+    g1.configure_embeddings(3).unwrap();
+
+    let c1 = g1.add_claim("A", "a", 0.9).unwrap();
+    g1.set_embedding(&c1.uid, &[0.1, 0.2, 0.3]).unwrap();
+
+    let snapshot = g1.export_typed().unwrap();
+
+    // Import into a fresh graph with same embedding dimension
+    let g2 = mem_graph();
+    g2.configure_embeddings(3).unwrap();
+
+    let result = g2.import_typed(&snapshot).unwrap();
+    assert_eq!(result.nodes_imported, 1);
+    assert_eq!(result.embeddings_imported, 1);
+
+    // Verify embedding was restored
+    let emb = g2.get_embedding(&c1.uid).unwrap().unwrap();
+    assert_eq!(emb.len(), 3);
+    assert!((emb[0] - 0.1).abs() < 0.001);
+}
+
+// ==== Phase v0.5: New Methods ====
+
+#[test]
+fn test_get_edge_between() {
+    let g = mem_graph();
+    let n1 = g.add_node(make_entity_node("Rust")).unwrap();
+    let n2 = g.add_node(make_entity_node("Python")).unwrap();
+
+    // No edges yet
+    let edges = g.get_edge_between(&n1.uid, &n2.uid, None).unwrap();
+    assert!(edges.is_empty());
+
+    // Add an edge
+    let edge = g.add_link(&n1.uid, &n2.uid, EdgeType::RelevantTo).unwrap();
+
+    // Find edge without type filter
+    let edges = g.get_edge_between(&n1.uid, &n2.uid, None).unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].uid, edge.uid);
+
+    // Find edge with matching type filter
+    let edges = g.get_edge_between(&n1.uid, &n2.uid, Some(EdgeType::RelevantTo)).unwrap();
+    assert_eq!(edges.len(), 1);
+
+    // Find edge with non-matching type filter
+    let edges = g.get_edge_between(&n1.uid, &n2.uid, Some(EdgeType::Supports)).unwrap();
+    assert!(edges.is_empty());
+
+    // Direction matters
+    let edges = g.get_edge_between(&n2.uid, &n1.uid, None).unwrap();
+    assert!(edges.is_empty());
+}
+
+#[test]
+fn test_list_nodes() {
+    let g = mem_graph();
+
+    // Empty graph
+    let page = g.list_nodes(Pagination::first(10)).unwrap();
+    assert!(page.items.is_empty());
+    assert!(!page.has_more);
+
+    // Add some nodes
+    g.add_node(make_entity_node("Rust")).unwrap();
+    g.add_node(make_entity_node("Python")).unwrap();
+    g.add_node(make_entity_node("Go")).unwrap();
+
+    // List all
+    let page = g.list_nodes(Pagination::first(10)).unwrap();
+    assert_eq!(page.items.len(), 3);
+    assert!(!page.has_more);
+
+    // Paginate
+    let page = g.list_nodes(Pagination { limit: 2, offset: 0 }).unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert!(page.has_more);
+
+    let page = g.list_nodes(Pagination { limit: 2, offset: 2 }).unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert!(!page.has_more);
+}
+
+#[test]
+fn test_clear() {
+    let g = mem_graph();
+
+    // Add some data
+    let n1 = g.add_node(make_entity_node("Rust")).unwrap();
+    let n2 = g.add_node(make_entity_node("Python")).unwrap();
+    g.add_link(&n1.uid, &n2.uid, EdgeType::RelevantTo).unwrap();
+
+    // Verify data exists
+    let stats = g.stats().unwrap();
+    assert_eq!(stats.live_nodes, 2);
+    assert_eq!(stats.live_edges, 1);
+
+    // Clear
+    g.clear().unwrap();
+
+    // Verify empty
+    let page = g.list_nodes(Pagination::first(100)).unwrap();
+    assert!(page.items.is_empty());
+}
+
+#[test]
+fn test_pagination_default() {
+    let p = Pagination::default();
+    assert_eq!(p.limit, 100);
+    assert_eq!(p.offset, 0);
+}
+
+#[test]
+fn test_display_impls() {
+    use std::fmt::Write;
+
+    let mut s = String::new();
+
+    let pr = PurgeResult { nodes_purged: 1, edges_purged: 2, versions_purged: 3 };
+    write!(s, "{}", pr).unwrap();
+    assert!(s.contains("nodes: 1"));
+    s.clear();
+
+    let mr = MergeResult { edges_retargeted: 4, aliases_merged: 5 };
+    write!(s, "{}", mr).unwrap();
+    assert!(s.contains("4"));
+    s.clear();
+
+    let ir = ImportResult { relations_imported: 6 };
+    write!(s, "{}", ir).unwrap();
+    assert!(s.contains("6"));
+    s.clear();
+
+    let tr = TombstoneResult { edges_tombstoned: 7 };
+    write!(s, "{}", tr).unwrap();
+    assert!(s.contains("7"));
+    s.clear();
+
+    let tir = TypedImportResult {
+        nodes_imported: 1, edges_imported: 2,
+        nodes_skipped: 3, edges_skipped: 4,
+        embeddings_imported: 5,
+    };
+    write!(s, "{}", tir).unwrap();
+    assert!(s.contains("nodes: +1"));
+}

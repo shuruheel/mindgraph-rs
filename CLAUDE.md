@@ -4,10 +4,14 @@
 
 ```bash
 cargo build                              # Build the library
-cargo test                               # Run all tests (107 integration + 1 doc-test)
-cargo test --features async              # Run all tests including async (107 + 2 async + 1 doc-test)
-cargo clippy --features async -- -W clippy::all  # Lint (must produce 0 warnings)
-cargo doc --no-deps --features async     # Build docs with doc-tests
+cargo test                               # Run all tests (130 integration + 10 doc-tests)
+cargo test --features async              # Run all tests including async (130 + 2 async + 10 doc-tests)
+cargo clippy --all-features -- -W clippy::all  # Lint (must produce 0 warnings)
+cargo doc --no-deps --all-features       # Build docs with doc-tests
+cargo bench                              # Run criterion benchmarks
+cargo run --example basic                # Run basic example
+cargo run --example agent_memory         # Run agent memory example
+cargo run --example embedding_search --features async  # Run embedding search example
 cargo publish --dry-run --allow-dirty    # Verify publishability
 ```
 
@@ -23,12 +27,16 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - `src/query.rs` -- Query/result types: `Pagination`, `Page<T>`, `SearchOptions`, `NodeFilter`, `GraphStats`, `DecayResult`, `PropCondition`, `PropOp`, `TypedSnapshot`, `TypedImportResult`, `ValidatedBatch`, `PurgeResult`, `GraphSnapshot`, `ImportResult`, `MergeResult`, `GraphOp`, `BatchResult`, etc.
 - `src/types.rs` -- Core value types: `Uid`, `Confidence`, `Salience`, `PrivacyLevel`, `Timestamp`.
 - `src/provenance.rs` -- `ProvenanceRecord`, `ExtractionMethod`.
-- `src/embeddings.rs` -- `EmbeddingProvider` trait for pluggable embedding backends.
+- `src/embeddings.rs` -- `EmbeddingProvider` trait for pluggable embedding backends (sync; see doc comment for async guidance).
 - `src/events.rs` -- `GraphEvent` enum and `SubscriptionId` type for event subscriptions.
 - `src/openai.rs` -- `OpenAIEmbeddings` provider (behind `openai` feature flag).
 - `src/error.rs` -- `Error` enum and `Result<T>` alias.
-- `tests/integration.rs` -- 107 integration tests covering all features.
+- `tests/integration.rs` -- 130 integration tests covering all features.
 - `tests/async_integration.rs` -- 2 async integration tests (behind `async` feature flag).
+- `examples/basic.rs` -- Basic usage example (nodes, edges, queries, traversal).
+- `examples/agent_memory.rs` -- Agent memory example (sessions, preferences, summaries, decay).
+- `examples/embedding_search.rs` -- Embedding search example (mock provider, semantic search).
+- `benches/graph_bench.rs` -- Criterion benchmarks (insert, lookup, search, traversal, export/import).
 
 ## Architecture & Conventions
 
@@ -58,6 +66,7 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - Graph-level methods use domain names: `active_goals()`, `reasoning_chain()`, `tombstone_cascade()`, `search()`, `find_nodes()`, `merge_entities()`, `batch_apply()`.
 - Builder types: `NodeUpdate<'a>`, `EdgeUpdate<'a>` with `.apply()` terminal.
 - Paginated variants are suffixed: `*_paginated`.
+- Memory constructors: `add_session()`, `add_preference()`, `add_summary()` (`add_memory()` is deprecated).
 
 ### Props System
 - `NodeProps` and `EdgeProps` are `#[serde(tag = "_type")]` enums serialized as JSON.
@@ -67,9 +76,14 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 
 ### Type Conventions
 - `Uid` inner field is private; use `Uid::as_str()`, `Uid::from()`, or `Uid::new()`.
+- `CreateNode.uid` is `Option<Uid>` — set via `.with_uid()` for pre-assigned UIDs (used by `validate_batch`).
 - `GraphEdge.layer` is `Layer` (not `String`).
 - `reasoning_chain()` includes the starting node at depth 0.
 - `GraphOp::AddNode` and `GraphOp::AddEdge` wrap `Box<CreateNode>` / `Box<CreateEdge>` to keep enum size small.
+- `GraphEvent`, `GraphStats`, `DecayResult`, `BatchResult` all implement `Display`.
+- `GraphEvent::EdgeTombstoned` is a struct variant with `uid`, `from_uid`, `to_uid`, `edge_type` fields.
+- `NodeFilter.node_types` (multi-type OR filter) takes precedence over `node_type` if both set.
+- `TypedSnapshot.embeddings` stores `Vec<(Uid, Vec<f32>)>` with `#[serde(default)]` for backward compat.
 
 ### Default Agent
 - `MindGraph` has a `default_agent` field (default: `"system"`).
@@ -79,12 +93,26 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 ### Async
 - `AsyncMindGraph` (behind `async` feature) wraps `Arc<MindGraph>` and delegates via `spawn_blocking`.
 - Builder types (`NodeUpdate`, `EdgeUpdate`) can't cross await points; use `update_node()` / `update_edge()` directly.
-- All v0.3 and v0.4 methods have async wrappers. Event methods (`on_change`, `unsubscribe`) don't use `spawn_blocking`.
+- All methods have async wrappers. Event methods (`on_change`, `unsubscribe`) don't use `spawn_blocking`.
+- `spawn_blocking` join errors return `Error::TaskJoin` instead of panicking.
+
+### Tracing
+- Optional `tracing` feature flag for observability.
+- Key `MindGraph` methods are instrumented with `#[cfg_attr(feature = "tracing", tracing::instrument(skip(self, ...)))]`.
+- Instrumented methods: `add_node`, `get_node`, `get_live_node`, `add_edge`, `tombstone`, `tombstone_cascade`, `search`, `find_nodes`, `reachable`, `reasoning_chain`, `semantic_search`, `embed_nodes`, `batch_apply`, `merge_entities`, `decay_salience`, `stats`.
+
+### Embeddings
+- `EmbeddingProvider` trait is sync; the `openai` feature uses blocking HTTP via `ureq`.
+- `AsyncMindGraph` wraps embedding calls via `spawn_blocking`.
+- `embed_nodes()` does bulk embedding: fetches live nodes, calls `embed_batch()`, stores vectors.
+- `semantic_search()` over-fetches and retries to compensate for tombstoned nodes (up to k*10).
 
 ### Error Handling
 - All fallible operations return `crate::Result<T>` (alias for `std::result::Result<T, crate::Error>`).
 - Storage helpers (`extract_string`, `extract_float`, etc.) return typed errors on mismatches.
 - `Confidence::new()` and `Salience::new()` validate the 0.0-1.0 range.
+- `Error::TaskJoin` wraps `tokio::task::JoinError` from `spawn_blocking` (no more panics).
+- RwLock poisoning is handled via `.unwrap_or_else(|e| e.into_inner())` — no panics on poisoned locks.
 
 ### Testing
 - All tests use `MindGraph::open_in_memory()` via the `mem_graph()` helper.

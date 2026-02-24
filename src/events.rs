@@ -18,15 +18,33 @@ pub enum EventKind {
 /// Events emitted by graph mutations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GraphEvent {
-    NodeAdded(Box<GraphNode>),
-    NodeUpdated { uid: Uid, version: i64 },
-    NodeTombstoned(Uid),
-    EdgeAdded(Box<GraphEdge>),
+    NodeAdded {
+        node: Box<GraphNode>,
+        changed_by: String,
+    },
+    NodeUpdated {
+        uid: Uid,
+        version: i64,
+        node_type: NodeType,
+        layer: Layer,
+        changed_by: String,
+    },
+    NodeTombstoned {
+        uid: Uid,
+        node_type: NodeType,
+        layer: Layer,
+        changed_by: String,
+    },
+    EdgeAdded {
+        edge: Box<GraphEdge>,
+        changed_by: String,
+    },
     EdgeTombstoned {
         uid: Uid,
         from_uid: Uid,
         to_uid: Uid,
         edge_type: EdgeType,
+        changed_by: String,
     },
 }
 
@@ -34,11 +52,22 @@ impl GraphEvent {
     /// Returns the kind of this event.
     pub fn kind(&self) -> EventKind {
         match self {
-            GraphEvent::NodeAdded(_) => EventKind::NodeAdded,
+            GraphEvent::NodeAdded { .. } => EventKind::NodeAdded,
             GraphEvent::NodeUpdated { .. } => EventKind::NodeUpdated,
-            GraphEvent::NodeTombstoned(_) => EventKind::NodeTombstoned,
-            GraphEvent::EdgeAdded(_) => EventKind::EdgeAdded,
+            GraphEvent::NodeTombstoned { .. } => EventKind::NodeTombstoned,
+            GraphEvent::EdgeAdded { .. } => EventKind::EdgeAdded,
             GraphEvent::EdgeTombstoned { .. } => EventKind::EdgeTombstoned,
+        }
+    }
+
+    /// Returns the agent identity that triggered this event.
+    pub fn changed_by(&self) -> &str {
+        match self {
+            GraphEvent::NodeAdded { changed_by, .. }
+            | GraphEvent::NodeUpdated { changed_by, .. }
+            | GraphEvent::NodeTombstoned { changed_by, .. }
+            | GraphEvent::EdgeAdded { changed_by, .. }
+            | GraphEvent::EdgeTombstoned { changed_by, .. } => changed_by,
         }
     }
 }
@@ -46,11 +75,11 @@ impl GraphEvent {
 impl fmt::Display for GraphEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GraphEvent::NodeAdded(node) => write!(f, "NodeAdded({}, {})", node.uid, node.label),
-            GraphEvent::NodeUpdated { uid, version } => write!(f, "NodeUpdated({}, v{})", uid, version),
-            GraphEvent::NodeTombstoned(uid) => write!(f, "NodeTombstoned({})", uid),
-            GraphEvent::EdgeAdded(edge) => write!(f, "EdgeAdded({}, {})", edge.uid, edge.edge_type),
-            GraphEvent::EdgeTombstoned { uid, from_uid, to_uid, edge_type } => {
+            GraphEvent::NodeAdded { node, .. } => write!(f, "NodeAdded({}, {})", node.uid, node.label),
+            GraphEvent::NodeUpdated { uid, version, .. } => write!(f, "NodeUpdated({}, v{})", uid, version),
+            GraphEvent::NodeTombstoned { uid, .. } => write!(f, "NodeTombstoned({})", uid),
+            GraphEvent::EdgeAdded { edge, .. } => write!(f, "EdgeAdded({}, {})", edge.uid, edge.edge_type),
+            GraphEvent::EdgeTombstoned { uid, from_uid, to_uid, edge_type, .. } => {
                 write!(f, "EdgeTombstoned({}, {} -> {}, {})", uid, from_uid, to_uid, edge_type)
             }
         }
@@ -123,9 +152,16 @@ impl EventFilter {
             }
         }
 
+        // Check agent filter
+        if let Some(ref agent) = self.agent_id {
+            if event.changed_by() != agent {
+                return false;
+            }
+        }
+
         // Check node/edge type and layer
         match event {
-            GraphEvent::NodeAdded(node) => {
+            GraphEvent::NodeAdded { node, .. } => {
                 if let Some(ref types) = self.node_types {
                     if !types.contains(&node.node_type) {
                         return false;
@@ -137,10 +173,31 @@ impl EventFilter {
                     }
                 }
             }
-            GraphEvent::NodeUpdated { .. } | GraphEvent::NodeTombstoned(_) => {
-                // These events don't carry type/layer info; pass through type/layer filters
+            GraphEvent::NodeUpdated { node_type, layer, .. } => {
+                if let Some(ref types) = self.node_types {
+                    if !types.contains(node_type) {
+                        return false;
+                    }
+                }
+                if let Some(ref layers) = self.layers {
+                    if !layers.contains(layer) {
+                        return false;
+                    }
+                }
             }
-            GraphEvent::EdgeAdded(edge) => {
+            GraphEvent::NodeTombstoned { node_type, layer, .. } => {
+                if let Some(ref types) = self.node_types {
+                    if !types.contains(node_type) {
+                        return false;
+                    }
+                }
+                if let Some(ref layers) = self.layers {
+                    if !layers.contains(layer) {
+                        return false;
+                    }
+                }
+            }
+            GraphEvent::EdgeAdded { edge, .. } => {
                 if let Some(ref types) = self.edge_types {
                     if !types.contains(&edge.edge_type) {
                         return false;
@@ -160,10 +217,6 @@ impl EventFilter {
                 }
             }
         }
-
-        // Agent filter: only applies to events that carry agent identity in the node/edge
-        // For now, agent_id filter is checked by the subscription wrapper
-        // (the event itself doesn't always carry the agent who triggered it)
 
         true
     }

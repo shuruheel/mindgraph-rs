@@ -4,8 +4,8 @@
 
 ```bash
 cargo build                              # Build the library
-cargo test                               # Run all tests (146 integration + 13 doc-tests)
-cargo test --features async              # Run all tests including async (146 + 5 async + 13 doc-tests)
+cargo test                               # Run all tests (158 integration + 13 doc-tests)
+cargo test --features async              # Run all tests including async (158 + 7 async + 13 doc-tests)
 cargo clippy --all-features -- -W clippy::all  # Lint (must produce 0 warnings)
 cargo doc --no-deps --all-features       # Build docs with doc-tests
 cargo bench                              # Run criterion benchmarks
@@ -83,13 +83,16 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - `reasoning_chain()` includes the starting node at depth 0.
 - `GraphOp::AddNode` and `GraphOp::AddEdge` wrap `Box<CreateNode>` / `Box<CreateEdge>` to keep enum size small.
 - `GraphEvent`, `GraphStats`, `DecayResult`, `BatchResult` all implement `Display`.
-- `GraphEvent::EdgeTombstoned` is a struct variant with `uid`, `from_uid`, `to_uid`, `edge_type` fields.
+- All `GraphEvent` variants are struct variants with a `changed_by: String` field.
+- `GraphEvent::NodeUpdated` and `NodeTombstoned` carry `node_type` and `layer` for filtering.
+- `GraphEvent::changed_by()` accessor returns the agent identity that triggered the event.
 - `NodeFilter.node_types` (multi-type OR filter) takes precedence over `node_type` if both set.
 - `TypedSnapshot.embeddings` stores `Vec<(Uid, Vec<f32>)>` with `#[serde(default)]` for backward compat.
 
 ### Default Agent
 - `MindGraph` has a `default_agent` field (default: `"system"`).
 - `set_default_agent()` / `default_agent()` get/set the identity.
+- `add_node()`, `add_edge()`, and batch methods use `default_agent()` for version records.
 - `NodeUpdate` and `EdgeUpdate` builders fall back to `default_agent()` when `changed_by` is not set.
 
 ### Async
@@ -112,20 +115,30 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - Storage parsers fall back to `Custom(name)` for unknown type strings, enabling forward compatibility.
 
 ### Multi-Agent
+- `AgentHandle` and `AsyncAgentHandle` derive `Clone`.
 - `AgentHandle` provides a scoped graph handle with a fixed agent identity.
 - Created via `graph.agent("alice")` (requires `Arc<MindGraph>`).
-- All mutation methods (`add_node`, `add_edge`, `tombstone`, etc.) auto-set `changed_by`.
+- All mutation methods (`add_node`, `add_edge`, `tombstone`, `tombstone_edge`, `update_edge`, etc.) auto-set `changed_by`.
+- Read methods: `get_node`, `get_live_node`, `get_edge`, `get_edge_between`, `edges_from`, `edges_to`, `search`, `find_nodes`.
+- Traversal methods: `reachable`, `reasoning_chain`, `neighborhood`.
+- History/stats: `node_history`, `count_nodes`, `node_exists`, `stats`.
+- Convenience constructors: `add_entity`, `add_claim`, `add_goal`, `add_observation`, `add_session`, `add_preference`, `add_summary`, `add_link`, `add_custom_node`.
 - `sub_agent("sub")` creates child handles with `parent_agent` tracking.
 - `my_nodes()` queries nodes created by this agent (via `node_version` where version=1).
-- `AsyncAgentHandle` wraps `AgentHandle` for async contexts.
-- Internal `_as` methods: `add_node_as`, `add_edge_as`, `tombstone_cascade_as`.
+- `AsyncAgentHandle` wraps `AgentHandle` for async contexts with all corresponding async methods.
+- Internal `_as` methods: `add_node_as`, `add_edge_as`, `update_edge_as`, `tombstone_cascade_as`.
 
 ### Filtered Events & Streaming
 - `EventKind` enum: `NodeAdded`, `NodeUpdated`, `NodeTombstoned`, `EdgeAdded`, `EdgeTombstoned`.
 - `EventFilter` with builder methods: `.node_types()`, `.edge_types()`, `.layers()`, `.event_kinds()`, `.agent()`.
+- `EventFilter::matches()` checks all fields including `agent_id` against `event.changed_by()`.
 - `on_change_filtered(filter, cb)` for sync filtered subscriptions.
 - `MindGraph::watch(filter) -> WatchStream` (behind `async` feature) for async streaming via `tokio::sync::broadcast`.
+- `WatchStream` implements `futures_core::Stream` for use with `StreamExt`, `select!`, etc.
 - `WatchStream::recv()` loops on broadcast receiver, applies filter, handles `Lagged` by continuing.
+- `WatchStream::lagged_count()` returns total events dropped due to broadcast lag.
+- `open_with_broadcast_capacity()` and `open_in_memory_with_broadcast_capacity()` (behind `async` feature) allow custom channel size.
+- `GraphNode::custom_props::<T>()` returns `Result<Option<T>>` (not `Option<T>`).
 
 ### Embeddings
 - `EmbeddingProvider` trait is sync; the `openai` feature uses blocking HTTP via `ureq`.

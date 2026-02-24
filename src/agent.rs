@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::graph::MindGraph;
-use crate::query::TombstoneResult;
+use crate::query::{GraphStats, SearchOptions, SearchResult, TombstoneResult, VersionRecord};
 use crate::schema::edge::{CreateEdge, GraphEdge};
 use crate::schema::edge_props::EdgeProps;
 use crate::schema::node::{CreateNode, GraphNode};
 use crate::schema::node_props::NodeProps;
-use crate::schema::EdgeType;
+use crate::schema::{EdgeType, NodeType};
+use crate::traversal::{PathStep, TraversalOptions};
 use crate::types::*;
 
 /// A scoped handle to a [`MindGraph`] with a fixed agent identity.
@@ -30,6 +31,7 @@ use crate::types::*;
 /// let history = alice.graph().node_history(&node.uid).unwrap();
 /// assert_eq!(history[0].changed_by, "alice");
 /// ```
+#[derive(Clone)]
 pub struct AgentHandle {
     graph: Arc<MindGraph>,
     agent_id: String,
@@ -87,6 +89,11 @@ impl AgentHandle {
         self.graph.tombstone(uid, reason, &self.agent_id)
     }
 
+    /// Tombstone an edge, recording this agent.
+    pub fn tombstone_edge(&self, uid: &Uid, reason: &str) -> Result<()> {
+        self.graph.tombstone_edge(uid, reason, &self.agent_id)
+    }
+
     /// Tombstone a node and its connected edges, recording this agent.
     pub fn tombstone_cascade(&self, uid: &Uid, reason: &str) -> Result<TombstoneResult> {
         self.graph.tombstone_cascade_as(uid, reason, &self.agent_id)
@@ -107,6 +114,18 @@ impl AgentHandle {
         self.graph.update_node(uid, label, summary, confidence, salience, props, &self.agent_id, reason)
     }
 
+    /// Update an edge, recording this agent.
+    pub fn update_edge(
+        &self,
+        uid: &Uid,
+        confidence: Option<Confidence>,
+        weight: Option<f64>,
+        props: Option<EdgeProps>,
+        reason: &str,
+    ) -> Result<GraphEdge> {
+        self.graph.update_edge_as(uid, confidence, weight, props, &self.agent_id, reason)
+    }
+
     // ---- Read methods (delegate directly) ----
 
     /// Get a node by UID.
@@ -119,8 +138,33 @@ impl AgentHandle {
         self.graph.get_live_node(uid)
     }
 
+    /// Get an edge by UID.
+    pub fn get_edge(&self, uid: &Uid) -> Result<Option<GraphEdge>> {
+        self.graph.get_edge(uid)
+    }
+
+    /// Get live edges between two specific nodes.
+    pub fn get_edge_between(
+        &self,
+        from_uid: &Uid,
+        to_uid: &Uid,
+        edge_type: Option<EdgeType>,
+    ) -> Result<Vec<GraphEdge>> {
+        self.graph.get_edge_between(from_uid, to_uid, edge_type)
+    }
+
+    /// Get all edges from a node.
+    pub fn edges_from(&self, uid: &Uid, edge_type: Option<EdgeType>) -> Result<Vec<GraphEdge>> {
+        self.graph.edges_from(uid, edge_type)
+    }
+
+    /// Get all edges to a node.
+    pub fn edges_to(&self, uid: &Uid, edge_type: Option<EdgeType>) -> Result<Vec<GraphEdge>> {
+        self.graph.edges_to(uid, edge_type)
+    }
+
     /// Search nodes by text.
-    pub fn search(&self, query: &str, opts: &crate::query::SearchOptions) -> Result<Vec<crate::query::SearchResult>> {
+    pub fn search(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
         self.graph.search(query, opts)
     }
 
@@ -132,6 +176,49 @@ impl AgentHandle {
     /// Get all nodes created by this agent.
     pub fn my_nodes(&self) -> Result<Vec<GraphNode>> {
         self.graph.nodes_by_agent(&self.agent_id)
+    }
+
+    // ---- Traversal ----
+
+    /// Get all nodes reachable from a starting node.
+    pub fn reachable(&self, start: &Uid, opts: &TraversalOptions) -> Result<Vec<PathStep>> {
+        self.graph.reachable(start, opts)
+    }
+
+    /// Follow a reasoning chain from a claim node.
+    pub fn reasoning_chain(&self, claim_uid: &Uid, max_depth: u32) -> Result<Vec<PathStep>> {
+        self.graph.reasoning_chain(claim_uid, max_depth)
+    }
+
+    /// Get the neighborhood of a node up to a given depth.
+    pub fn neighborhood(&self, uid: &Uid, depth: u32) -> Result<Vec<PathStep>> {
+        self.graph.neighborhood(uid, depth)
+    }
+
+    // ---- History ----
+
+    /// Get the full version history for a node.
+    pub fn node_history(&self, uid: &Uid) -> Result<Vec<VersionRecord>> {
+        self.graph.node_history(uid)
+    }
+
+    // ---- Count / Exists ----
+
+    /// Count live nodes of a given type.
+    pub fn count_nodes(&self, node_type: NodeType) -> Result<u64> {
+        self.graph.count_nodes(node_type)
+    }
+
+    /// Check if a live (non-tombstoned) node exists.
+    pub fn node_exists(&self, uid: &Uid) -> Result<bool> {
+        self.graph.node_exists(uid)
+    }
+
+    // ---- Stats ----
+
+    /// Get graph-wide statistics.
+    pub fn stats(&self) -> Result<GraphStats> {
+        self.graph.stats()
     }
 
     // ---- Convenience constructors ----
@@ -165,6 +252,54 @@ impl AgentHandle {
             status: Some("active".to_string()),
             ..Default::default()
         })))
+    }
+
+    /// Add an observation node.
+    pub fn add_observation(&self, label: &str, description: &str) -> Result<GraphNode> {
+        use crate::schema::props::reality::ObservationProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Observation(ObservationProps {
+                content: description.to_string(),
+                ..Default::default()
+            }))
+            .summary(description),
+        )
+    }
+
+    /// Add a session node.
+    pub fn add_session(&self, label: &str, focus: &str) -> Result<GraphNode> {
+        use crate::schema::props::memory::SessionProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Session(SessionProps {
+                focus_summary: Some(focus.to_string()),
+                ..Default::default()
+            }))
+            .summary(focus),
+        )
+    }
+
+    /// Add a preference node.
+    pub fn add_preference(&self, label: &str, key: &str, value: &str) -> Result<GraphNode> {
+        use crate::schema::props::memory::PreferenceProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Preference(PreferenceProps {
+                key: key.to_string(),
+                value: value.to_string(),
+                ..Default::default()
+            })),
+        )
+    }
+
+    /// Add a summary node.
+    pub fn add_summary(&self, label: &str, content: &str) -> Result<GraphNode> {
+        use crate::schema::props::memory::SummaryProps;
+        self.add_node(
+            CreateNode::new(label, NodeProps::Summary(SummaryProps {
+                content: content.to_string(),
+                ..Default::default()
+            }))
+            .summary(content),
+        )
     }
 
     /// Add a link (edge) between two nodes with default props.

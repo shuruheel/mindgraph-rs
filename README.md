@@ -578,38 +578,121 @@ if page1.has_more {
 | Memory (5) | CapturedIn, TraceEntry, Summarizes, Recalls, GovernedBy |
 | Agent (10) | AssignedTo, PlannedBy, HasStep, Targets, RequiresApproval, ExecutedBy, ExecutionOf, ProducesNode, GovernedByPolicy, BudgetFor |
 
+## mindgraph-server
+
+The `mindgraph-server` crate provides a REST API over `AsyncMindGraph` via [Axum](https://github.com/tokio-rs/axum). It lives in the same workspace as the library but is a separate binary crate.
+
+### Running
+
+```bash
+cargo build -p mindgraph-server --release
+
+MINDGRAPH_DB_PATH=./data/mindgraph.db \
+MINDGRAPH_TOKEN=your-secret-token \
+MINDGRAPH_PORT=18790 \
+./target/release/mindgraph-server
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MINDGRAPH_DB_PATH` | `mindgraph.db` | Path to CozoDB file (use `:memory:` for in-memory) |
+| `MINDGRAPH_TOKEN` | *(none)* | Bearer token for auth (no auth if unset) |
+| `MINDGRAPH_PORT` | `18790` | Listen port |
+| `MINDGRAPH_DEFAULT_AGENT` | `system` | Default agent identity for mutations |
+
+### API Endpoints (31 routes)
+
+**Unauthenticated:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+
+**Authenticated (Bearer token via middleware):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/stats` | Graph-wide statistics |
+| POST | `/entity` | Add entity node |
+| POST | `/claim` | Add claim node |
+| POST | `/goal` | Add goal node |
+| POST | `/preference` | Add preference node |
+| POST | `/session` | Add session node |
+| POST | `/observation` | Add observation node |
+| POST | `/summary` | Add summary node |
+| POST | `/node` | Add generic node with full `NodeProps` |
+| GET | `/node/{uid}` | Get node by UID |
+| PATCH | `/node/{uid}` | Update node fields and/or props |
+| DELETE | `/node/{uid}` | Tombstone cascade (node + connected edges) |
+| GET | `/node/{uid}/history` | Full version history for a node |
+| GET | `/node/{uid}/history/{version}` | Node snapshot at a specific version |
+| POST | `/link` | Add typed edge (simple, default props) |
+| POST | `/edge` | Add edge with full `EdgeProps` |
+| DELETE | `/edge/{uid}` | Tombstone a single edge |
+| GET | `/edge/{uid}/history` | Full version history for an edge |
+| GET | `/edges?from_uid=&edge_type=` | Get edges from a node |
+| POST | `/search` | Full-text search |
+| GET | `/nodes?layer=&type=&agent=&limit=&offset=` | Filter/paginate nodes |
+| GET | `/chain/{uid}?max_depth=` | Reasoning chain traversal |
+| GET | `/neighborhood/{uid}?depth=` | Neighborhood traversal |
+| GET | `/path?from=&to=&max_depth=` | Find path between nodes |
+| GET | `/agent/{agent_id}/nodes` | Nodes created by an agent |
+| POST | `/entities/merge` | Merge two entities |
+| POST | `/alias` | Add an alias for entity resolution |
+| GET | `/aliases/{uid}` | Get all aliases for a node |
+| GET | `/resolve?text=&limit=` | Exact + fuzzy alias resolution |
+| GET | `/export` | Export typed snapshot |
+| POST | `/import` | Import typed snapshot |
+| POST | `/decay` | Salience decay + optional auto-tombstone |
+| POST | `/purge` | Hard-delete old tombstoned data |
+
+### Architecture
+
+The server is a thin translation layer:
+- Each handler maps JSON request bodies to `AsyncMindGraph` / `AsyncAgentHandle` method calls
+- Mutations use `AsyncAgentHandle` (via `graph.agent(&agent_id)`) so `changed_by` is always set
+- Auth is a single Axum middleware layer applied to all routes except `/health`
+- No graph logic lives in the server — it delegates everything to the `mindgraph` crate
+
+The server is **not published to crates.io** (it's a binary, not a library). Distribute via Docker, GitHub Releases, or `cargo install --path mindgraph-server`.
+
 ## Architecture
 
 ```
-mindgraph
-├── graph.rs          -- MindGraph: the main public API + NodeUpdate/EdgeUpdate builders
-├── async_graph.rs    -- AsyncMindGraph: tokio wrapper (behind "async" feature)
+mindgraph                      -- Library crate (published to crates.io)
+├── graph.rs                   -- MindGraph: the main public API + NodeUpdate/EdgeUpdate builders
+├── async_graph.rs             -- AsyncMindGraph: tokio wrapper (behind "async" feature)
 ├── storage/
-│   ├── cozo.rs       -- CozoStorage: CozoDB CRUD, traversal, pagination, batch ops
-│   └── migrations.rs -- Schema DDL (CozoDB :create statements + indices)
+│   ├── cozo.rs                -- CozoStorage: CozoDB CRUD, traversal, pagination, batch ops
+│   └── migrations.rs          -- Schema DDL (CozoDB :create statements + indices)
 ├── schema/
-│   ├── mod.rs        -- Layer, NodeType (48), EdgeType (70) enums
-│   ├── node.rs       -- GraphNode, CreateNode
-│   ├── edge.rs       -- GraphEdge, CreateEdge
-│   ├── node_props.rs -- NodeProps discriminated union
-│   ├── edge_props.rs -- EdgeProps discriminated union
-│   └── props/        -- Per-layer property structs
+│   ├── mod.rs                 -- Layer, NodeType (48), EdgeType (70) enums
+│   ├── node.rs                -- GraphNode, CreateNode
+│   ├── edge.rs                -- GraphEdge, CreateEdge
+│   ├── node_props.rs          -- NodeProps discriminated union
+│   ├── edge_props.rs          -- EdgeProps discriminated union
+│   └── props/                 -- Per-layer property structs
 │       ├── reality.rs    (4 structs)
 │       ├── epistemic.rs  (24 structs)
 │       ├── intent.rs     (6 structs)
 │       ├── action.rs     (5 structs)
 │       ├── memory.rs     (5 structs)
 │       └── agent.rs      (8 structs)
-├── traversal.rs      -- Direction, TraversalOptions, PathStep
-├── query.rs          -- Pagination, Page<T>, GraphStats, DecayResult, TypedSnapshot, etc.
-├── types.rs          -- Uid, Confidence, Salience, PrivacyLevel, Timestamp
-├── provenance.rs     -- ProvenanceRecord, ExtractionMethod
-├── embeddings.rs     -- EmbeddingProvider (sync) + AsyncEmbeddingProvider traits
-├── events.rs         -- GraphEvent, EventKind, EventFilter, SubscriptionId
-├── watch.rs          -- WatchStream (async filtered event stream, behind "async")
-├── agent.rs          -- AgentHandle (scoped per-agent graph access)
-├── openai.rs         -- OpenAIEmbeddings (behind "openai" feature)
-└── error.rs          -- Error types + Result alias
+├── traversal.rs               -- Direction, TraversalOptions, PathStep
+├── query.rs                   -- Pagination, Page<T>, GraphStats, DecayResult, TypedSnapshot, etc.
+├── types.rs                   -- Uid, Confidence, Salience, PrivacyLevel, Timestamp
+├── provenance.rs              -- ProvenanceRecord, ExtractionMethod
+├── embeddings.rs              -- EmbeddingProvider (sync) + AsyncEmbeddingProvider traits
+├── events.rs                  -- GraphEvent, EventKind, EventFilter, SubscriptionId
+├── watch.rs                   -- WatchStream (async filtered event stream, behind "async")
+├── agent.rs                   -- AgentHandle (scoped per-agent graph access)
+├── openai.rs                  -- OpenAIEmbeddings (behind "openai" feature)
+└── error.rs                   -- Error types + Result alias
+
+mindgraph-server/              -- Binary crate (HTTP server, not published)
+└── src/main.rs                -- Axum REST API wrapping AsyncMindGraph (31 endpoints)
 ```
 
 ## Storage

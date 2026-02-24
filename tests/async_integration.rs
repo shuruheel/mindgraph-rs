@@ -57,3 +57,65 @@ async fn test_async_concurrent_writes() {
         assert!(g.node_exists(node.uid.clone()).await.unwrap());
     }
 }
+
+// ==== v0.6: WatchStream ====
+
+#[tokio::test]
+async fn test_async_watch_stream() {
+    let g = AsyncMindGraph::open_in_memory().await.unwrap();
+    let mut stream = g.watch(EventFilter::new().event_kinds(vec![EventKind::NodeAdded]));
+
+    // Add a node and check we get the event
+    let node = g.add_entity("Test".into(), "test".into()).await.unwrap();
+
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        stream.recv(),
+    ).await.unwrap().unwrap();
+
+    assert_eq!(event.kind(), EventKind::NodeAdded);
+    if let GraphEvent::NodeAdded(n) = &event {
+        assert_eq!(n.uid, node.uid);
+    } else {
+        panic!("Expected NodeAdded event");
+    }
+}
+
+// ==== v0.6: AsyncAgentHandle ====
+
+#[tokio::test]
+async fn test_async_agent_handle() {
+    let g = AsyncMindGraph::open_in_memory().await.unwrap();
+    let alice = g.agent("alice");
+
+    assert_eq!(alice.agent_id(), "alice");
+
+    let node = alice.add_entity("Test Entity".into(), "test".into()).await.unwrap();
+    assert_eq!(node.label, "Test Entity");
+
+    let my = alice.my_nodes().await.unwrap();
+    assert_eq!(my.len(), 1);
+    assert_eq!(my[0].uid, node.uid);
+}
+
+// ==== v0.6: Custom types in async ====
+
+#[tokio::test]
+async fn test_async_custom_node() {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct Widget {
+        color: String,
+    }
+    impl CustomNodeType for Widget {
+        fn type_name() -> &'static str { "Widget" }
+        fn layer() -> Layer { Layer::Reality }
+    }
+
+    let g = AsyncMindGraph::open_in_memory().await.unwrap();
+    let node = g.add_custom_node("red widget".into(), Widget { color: "red".into() }).await.unwrap();
+    assert_eq!(node.node_type, NodeType::Custom("Widget".into()));
+    let w: Widget = node.custom_props().unwrap();
+    assert_eq!(w.color, "red");
+}

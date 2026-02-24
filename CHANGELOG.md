@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-24
+
+### Breaking Changes
+- `NodeType` and `EdgeType` no longer implement `Copy` (they still implement `Clone`). This is required to support the new `Custom(String)` variant. Add `.clone()` where needed.
+
+### Added
+- **Custom Node/Edge Types**: `NodeType::Custom(String)` and `EdgeType::Custom(String)` variants for user-defined types. `CustomNodeType` trait for compile-time registration with typed serialization. `MindGraph::add_custom_node::<T>()` and `GraphNode::custom_props::<T>()` for ergonomic usage.
+- **Async Embedding Provider**: `AsyncEmbeddingProvider` trait (behind `async` feature) for native async embedding without `spawn_blocking`. `SyncProviderAdapter` wraps sync providers. `AsyncMindGraph` gains `embed_node_async`, `embed_nodes_async`, `semantic_search_text_async`.
+- **Filtered Event Channels**: `EventKind` enum and `EventFilter` builder for selective event subscriptions. `on_change_filtered(filter, cb)` for sync usage. `MindGraph::watch(filter) -> WatchStream` for async streaming via `tokio::sync::broadcast`.
+- **Multi-Agent Support**: `AgentHandle` struct providing scoped per-agent graph access. Created via `graph.agent("name")`. All mutations auto-set `changed_by`. `sub_agent()` for hierarchical agents. `my_nodes()` for agent-scoped queries. `AsyncAgentHandle` for async contexts.
+- `MindGraph::nodes_by_agent(agent_id)` query method.
+- `MindGraph::add_node_as()`, `add_edge_as()`, `tombstone_cascade_as()` for explicit agent identity on mutations.
+
+### Dependencies
+- Added `async-trait` (optional, behind `async` feature).
+
 ## [0.5.0] - 2026-02-23
 
 ### Added

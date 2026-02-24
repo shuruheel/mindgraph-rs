@@ -20,11 +20,11 @@ A structured semantic memory graph for agentic systems, built in Rust with [Cozo
 | **Memory** | Persistence & recall | Session, Trace, Summary, Preference |
 | **Agent** | Control plane | Agent, Task, Plan, Approval, Policy |
 
-The graph supports **48 node types** and **70 edge types**, each with type-safe property structs.
+The graph supports **48 built-in node types** and **70 built-in edge types**, each with type-safe property structs. User-defined custom types are also supported via the `CustomNodeType` trait.
 
 ## Features
 
-- **Type-safe schema** -- 48 node types and 70 edge types as Rust enums with typed props
+- **Type-safe schema** -- 48 node types and 70 edge types as Rust enums with typed props, plus extensible `Custom(String)` variants
 - **CozoDB storage** -- Embedded Datalog database with SQLite persistence or in-memory mode
 - **Full-text search** -- FTS indices on node labels and summaries with scoring and type/layer filters
 - **Structured filtering** -- `NodeFilter` builder for type (single or multi-type), layer, label substring, prop value, and confidence range queries
@@ -37,14 +37,16 @@ The graph supports **48 node types** and **70 edge types**, each with type-safe 
 - **Data lifecycle** -- `purge_tombstoned()` for hard-deleting old data; `export()`/`import()` for graph snapshots; `backup()`/`restore_backup()` for file-level backups
 - **Provenance tracking** -- Link extracted knowledge to its sources
 - **Entity resolution** -- Alias table, fuzzy matching, `merge_entities()` for deduplication
+- **Multi-agent support** -- `AgentHandle` provides scoped per-agent identity; all mutations auto-set `changed_by`, with `sub_agent()` for hierarchical agents
+- **Custom node/edge types** -- `CustomNodeType` trait for compile-time registration of user-defined types with typed ser/de
 - **Default agent identity** -- `set_default_agent()` reduces boilerplate in builder patterns
 - **Confidence & salience** -- Validated 0.0-1.0 scores on all nodes and edges
 - **Thread safety** -- `MindGraph` is `Send + Sync`, safe to share via `Arc<MindGraph>` or `into_shared()`
 - **Async support** -- Optional `AsyncMindGraph` wrapper for tokio runtimes (feature flag: `async`) with all methods
 - **Server-side query filtering** -- Query patterns push filtering into CozoDB Datalog for efficient large-graph queries
-- **Embedding/vector search** -- Pluggable `EmbeddingProvider` trait (sync; `AsyncMindGraph` wraps via `spawn_blocking`), CozoDB HNSW indices, `semantic_search()` with cosine distance
+- **Embedding/vector search** -- Pluggable `EmbeddingProvider` (sync) and `AsyncEmbeddingProvider` (native async) traits, CozoDB HNSW indices, `semantic_search()` with cosine distance
 - **Salience decay** -- Exponential decay with configurable half-life via `decay_salience()`, plus `auto_tombstone()` for cleanup
-- **Event subscriptions** -- `on_change()` callback system for reactive patterns on node/edge mutations
+- **Event subscriptions** -- `on_change()` callbacks, `on_change_filtered()` with `EventFilter`, and `watch()` async streaming via broadcast channels
 - **Convenience constructors** -- `add_claim()`, `add_entity()`, `add_goal()`, `add_observation()`, `add_session()`, `add_preference()`, `add_summary()`, `add_link()`
 - **Graph statistics** -- `stats()` returns comprehensive `GraphStats` with counts by type/layer
 - **Enhanced query composition** -- OR filters, time ranges, salience ranges, prop conditions, graph-aware `connected_to` filter
@@ -112,7 +114,7 @@ Enable the `async` feature for tokio integration:
 
 ```toml
 [dependencies]
-mindgraph = { version = "0.5", features = ["async"] }
+mindgraph = { version = "0.6", features = ["async"] }
 ```
 
 ```rust
@@ -150,13 +152,94 @@ async fn main() -> Result<()> {
 }
 ```
 
+## Custom Types
+
+Define your own node types without forking the crate:
+
+```rust
+use mindgraph::*;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodeSnippet {
+    language: String,
+    source: String,
+}
+
+impl CustomNodeType for CodeSnippet {
+    fn type_name() -> &'static str { "CodeSnippet" }
+    fn layer() -> Layer { Layer::Reality }
+}
+
+let graph = MindGraph::open_in_memory().unwrap();
+let node = graph.add_custom_node("hello.rs", CodeSnippet {
+    language: "rust".into(),
+    source: "fn main() {}".into(),
+}).unwrap();
+
+// Type-safe deserialization
+let snippet: CodeSnippet = node.custom_props().unwrap();
+assert_eq!(snippet.language, "rust");
+```
+
+**Breaking change in v0.6:** `NodeType` and `EdgeType` no longer implement `Copy` (they implement `Clone`). Add `.clone()` where needed.
+
+## Multi-Agent Support
+
+Use `AgentHandle` to scope operations to a specific agent identity:
+
+```rust
+use std::sync::Arc;
+use mindgraph::*;
+
+let graph = Arc::new(MindGraph::open_in_memory().unwrap());
+let alice = graph.agent("alice");
+
+// All mutations auto-set changed_by to "alice"
+let node = alice.add_entity("My Entity", "test").unwrap();
+let my_nodes = alice.my_nodes().unwrap();
+assert_eq!(my_nodes.len(), 1);
+
+// Sub-agents for hierarchical systems
+let sub = alice.sub_agent("alice-summarizer");
+assert_eq!(sub.parent_agent(), Some("alice"));
+```
+
+## Event Streaming
+
+Filter and stream graph events (requires `async` feature):
+
+```rust
+use mindgraph::*;
+
+let graph = MindGraph::open_in_memory().unwrap();
+
+// Sync filtered callback
+let filter = EventFilter::new().event_kinds(vec![EventKind::NodeAdded]);
+graph.on_change_filtered(filter, |event| {
+    println!("New node: {}", event);
+});
+```
+
+With async streaming:
+
+```rust
+// AsyncMindGraph::watch() returns a WatchStream
+let stream = async_graph.watch(
+    EventFilter::new()
+        .event_kinds(vec![EventKind::NodeAdded])
+        .layers(vec![Layer::Epistemic])
+);
+// stream.recv().await returns filtered events
+```
+
 ## Tracing
 
 Enable the `tracing` feature for observability:
 
 ```toml
 [dependencies]
-mindgraph = { version = "0.5", features = ["tracing"] }
+mindgraph = { version = "0.6", features = ["tracing"] }
 ```
 
 Key methods (`add_node`, `search`, `find_nodes`, `reachable`, `stats`, etc.) are instrumented with `tracing::instrument`. Combine with `tracing-subscriber` to get structured logs.
@@ -177,6 +260,8 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | `set_default_agent(name)` | Set default agent identity for builder fallbacks |
 | `default_agent()` | Get current default agent identity |
 | `storage()` | Access the underlying `CozoStorage` for advanced Datalog queries |
+| `agent(name)` | Create a scoped `AgentHandle` (requires `Arc<MindGraph>`) |
+| `nodes_by_agent(agent_id)` | Get all live nodes created by a specific agent |
 
 **Convenience constructors:**
 
@@ -191,6 +276,7 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | `add_summary(label, content)` | Add a Summary node with defaults |
 | `add_memory(label, content)` | **Deprecated** -- use `add_session()` instead |
 | `add_link(from, to, edge_type)` | Add an edge with default props for the edge type |
+| `add_custom_node::<T>(label, props)` | Add a node with a user-defined custom type |
 
 **Node operations:**
 
@@ -304,6 +390,8 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | Method | Description |
 |--------|-------------|
 | `on_change(callback)` | Subscribe to graph mutation events, returns `SubscriptionId` |
+| `on_change_filtered(filter, callback)` | Subscribe with `EventFilter` for selective events |
+| `watch(filter)` | (async feature) Create a `WatchStream` for async event streaming |
 | `unsubscribe(id)` | Remove a subscription |
 
 **Statistics:**
@@ -516,8 +604,10 @@ mindgraph
 ├── query.rs          -- Pagination, Page<T>, GraphStats, DecayResult, TypedSnapshot, etc.
 ├── types.rs          -- Uid, Confidence, Salience, PrivacyLevel, Timestamp
 ├── provenance.rs     -- ProvenanceRecord, ExtractionMethod
-├── embeddings.rs     -- EmbeddingProvider trait
-├── events.rs         -- GraphEvent enum, SubscriptionId
+├── embeddings.rs     -- EmbeddingProvider (sync) + AsyncEmbeddingProvider traits
+├── events.rs         -- GraphEvent, EventKind, EventFilter, SubscriptionId
+├── watch.rs          -- WatchStream (async filtered event stream, behind "async")
+├── agent.rs          -- AgentHandle (scoped per-agent graph access)
 ├── openai.rs         -- OpenAIEmbeddings (behind "openai" feature)
 └── error.rs          -- Error types + Result alias
 ```

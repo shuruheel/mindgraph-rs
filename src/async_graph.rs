@@ -666,6 +666,18 @@ impl AsyncMindGraph {
             .map_err(join_err)?
     }
 
+    /// Async version of [`MindGraph::add_custom_node`].
+    pub async fn add_custom_node<T: crate::schema::CustomNodeType + 'static>(
+        &self,
+        label: String,
+        props: T,
+    ) -> Result<GraphNode> {
+        let g = self.inner.clone();
+        tokio::task::spawn_blocking(move || g.add_custom_node(&label, props))
+            .await
+            .map_err(join_err)?
+    }
+
     // ---- v0.4: Embeddings ----
 
     /// Async version of [`MindGraph::configure_embeddings`].
@@ -721,6 +733,91 @@ impl AsyncMindGraph {
             .map_err(join_err)?
     }
 
+    /// Async version of [`MindGraph::embed_node`] (sync provider via spawn_blocking).
+    pub async fn embed_node(&self, uid: Uid, provider: Arc<dyn crate::embeddings::EmbeddingProvider>) -> Result<()> {
+        let g = self.inner.clone();
+        tokio::task::spawn_blocking(move || g.embed_node(&uid, provider.as_ref()))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`MindGraph::semantic_search_text`] (sync provider via spawn_blocking).
+    pub async fn semantic_search_text(
+        &self,
+        query: String,
+        k: usize,
+        provider: Arc<dyn crate::embeddings::EmbeddingProvider>,
+    ) -> Result<Vec<(GraphNode, f64)>> {
+        let g = self.inner.clone();
+        tokio::task::spawn_blocking(move || g.semantic_search_text(&query, k, provider.as_ref()))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Embed a single node using a native [`AsyncEmbeddingProvider`](crate::embeddings::AsyncEmbeddingProvider).
+    pub async fn embed_node_async(
+        &self,
+        uid: &Uid,
+        provider: &dyn crate::embeddings::AsyncEmbeddingProvider,
+    ) -> Result<()> {
+        let node = self.get_live_node(uid.clone()).await?;
+        let text = if node.summary.is_empty() {
+            node.label.clone()
+        } else {
+            format!("{} {}", node.label, node.summary)
+        };
+        let embedding = provider.embed(&text).await?;
+        self.set_embedding(uid.clone(), embedding).await
+    }
+
+    /// Embed multiple nodes using a native [`AsyncEmbeddingProvider`](crate::embeddings::AsyncEmbeddingProvider).
+    /// Returns the count of nodes successfully embedded.
+    pub async fn embed_nodes_async(
+        &self,
+        uids: &[Uid],
+        provider: &dyn crate::embeddings::AsyncEmbeddingProvider,
+    ) -> Result<usize> {
+        let mut texts = Vec::new();
+        let mut live_uids = Vec::new();
+
+        for uid in uids {
+            if let Some(node) = self.get_node(uid.clone()).await? {
+                if node.tombstone_at.is_none() {
+                    let text = if node.summary.is_empty() {
+                        node.label.clone()
+                    } else {
+                        format!("{} {}", node.label, node.summary)
+                    };
+                    texts.push(text);
+                    live_uids.push(uid.clone());
+                }
+            }
+        }
+
+        if texts.is_empty() {
+            return Ok(0);
+        }
+
+        let embeddings = provider.embed_batch(&texts).await?;
+
+        for (uid, embedding) in live_uids.iter().zip(embeddings.iter()) {
+            self.set_embedding(uid.clone(), embedding.clone()).await?;
+        }
+
+        Ok(live_uids.len())
+    }
+
+    /// Search by text using a native [`AsyncEmbeddingProvider`](crate::embeddings::AsyncEmbeddingProvider).
+    pub async fn semantic_search_text_async(
+        &self,
+        query: &str,
+        k: usize,
+        provider: &dyn crate::embeddings::AsyncEmbeddingProvider,
+    ) -> Result<Vec<(GraphNode, f64)>> {
+        let query_vec = provider.embed(query).await?;
+        self.semantic_search(query_vec, k).await
+    }
+
     // ---- v0.4: Decay ----
 
     /// Async version of [`MindGraph::decay_salience`].
@@ -749,6 +846,20 @@ impl AsyncMindGraph {
     /// Remove a subscription. See [`MindGraph::unsubscribe`].
     pub fn unsubscribe(&self, id: SubscriptionId) {
         self.inner.unsubscribe(id);
+    }
+
+    /// Subscribe to filtered graph change events. See [`MindGraph::on_change_filtered`].
+    pub fn on_change_filtered(
+        &self,
+        filter: crate::events::EventFilter,
+        cb: impl Fn(&GraphEvent) + Send + Sync + 'static,
+    ) -> SubscriptionId {
+        self.inner.on_change_filtered(filter, cb)
+    }
+
+    /// Create an async filtered event stream. See [`MindGraph::watch`].
+    pub fn watch(&self, filter: crate::events::EventFilter) -> crate::watch::WatchStream {
+        self.inner.watch(filter)
     }
 
     // ---- v0.4: Typed Export/Import ----
@@ -816,5 +927,129 @@ impl AsyncMindGraph {
         tokio::task::spawn_blocking(move || g.clear())
             .await
             .map_err(join_err)?
+    }
+
+    /// Create a scoped async agent handle bound to this graph.
+    pub fn agent(&self, name: impl Into<String>) -> AsyncAgentHandle {
+        AsyncAgentHandle {
+            handle: crate::agent::AgentHandle::new(self.inner.clone(), name.into(), None),
+        }
+    }
+}
+
+/// Async wrapper around [`AgentHandle`](crate::agent::AgentHandle).
+///
+/// All mutation methods are async via `spawn_blocking` and automatically
+/// set `changed_by` to this agent's identity.
+pub struct AsyncAgentHandle {
+    handle: crate::agent::AgentHandle,
+}
+
+impl AsyncAgentHandle {
+    /// Get the agent identity.
+    pub fn agent_id(&self) -> &str {
+        self.handle.agent_id()
+    }
+
+    /// Get the parent agent identity, if this is a sub-agent.
+    pub fn parent_agent(&self) -> Option<&str> {
+        self.handle.parent_agent()
+    }
+
+    /// Access the underlying sync agent handle.
+    pub fn inner(&self) -> &crate::agent::AgentHandle {
+        &self.handle
+    }
+
+    /// Create a child async agent handle.
+    pub fn sub_agent(&self, name: impl Into<String>) -> AsyncAgentHandle {
+        AsyncAgentHandle {
+            handle: self.handle.sub_agent(name),
+        }
+    }
+
+    /// Async version of [`AgentHandle::add_node`](crate::agent::AgentHandle::add_node).
+    pub async fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(create, &agent))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_edge`](crate::agent::AgentHandle::add_edge).
+    pub async fn add_edge(&self, create: CreateEdge) -> Result<GraphEdge> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_edge_as(create, &agent))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::tombstone`](crate::agent::AgentHandle::tombstone).
+    pub async fn tombstone(&self, uid: Uid, reason: String) -> Result<()> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.tombstone(&uid, &reason, &agent))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_entity`](crate::agent::AgentHandle::add_entity).
+    pub async fn add_entity(&self, label: String, entity_type: String) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Entity(crate::schema::props::reality::EntityProps {
+                entity_type,
+                ..Default::default()
+            })),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_claim`](crate::agent::AgentHandle::add_claim).
+    pub async fn add_claim(&self, label: String, content: String, confidence: f64) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        let conf = Confidence::new(confidence)?;
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Claim(crate::schema::props::epistemic::ClaimProps {
+                content,
+                ..Default::default()
+            })).confidence(conf),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Get a node by UID.
+    pub async fn get_node(&self, uid: Uid) -> Result<Option<GraphNode>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.get_node(&uid))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get all live nodes created by this agent.
+    pub async fn my_nodes(&self) -> Result<Vec<GraphNode>> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.nodes_by_agent(&agent))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Create an async filtered event stream.
+    pub fn watch(&self, filter: crate::events::EventFilter) -> crate::watch::WatchStream {
+        self.handle.watch(filter)
+    }
+
+    /// Create an async event stream filtered to events triggered by this agent.
+    pub fn watch_mine(&self) -> crate::watch::WatchStream {
+        self.handle.watch_mine()
     }
 }

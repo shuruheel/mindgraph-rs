@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::schema::props::*;
-use crate::schema::NodeType;
+use crate::schema::{Layer, NodeType};
 
 /// Type-safe discriminated union of all node properties.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,6 +70,13 @@ pub enum NodeProps {
     Policy(PolicyProps),
     Execution(ExecutionProps),
     SafetyBudget(SafetyBudgetProps),
+
+    // Extensible
+    Custom {
+        type_name: String,
+        layer: Layer,
+        data: serde_json::Value,
+    },
 }
 
 impl NodeProps {
@@ -128,6 +135,7 @@ impl NodeProps {
             NodeProps::Policy(_) => NodeType::Policy,
             NodeProps::Execution(_) => NodeType::Execution,
             NodeProps::SafetyBudget(_) => NodeType::SafetyBudget,
+            NodeProps::Custom { type_name, .. } => NodeType::Custom(type_name.clone()),
         }
     }
 
@@ -186,6 +194,7 @@ impl NodeProps {
             NodeProps::Policy(p) => serde_json::to_value(p).unwrap_or_default(),
             NodeProps::Execution(p) => serde_json::to_value(p).unwrap_or_default(),
             NodeProps::SafetyBudget(p) => serde_json::to_value(p).unwrap_or_default(),
+            NodeProps::Custom { data, .. } => data.clone(),
         }
     }
 
@@ -247,6 +256,25 @@ impl NodeProps {
             NodeType::Policy => Ok(NodeProps::Policy(de(value)?)),
             NodeType::Execution => Ok(NodeProps::Execution(de(value)?)),
             NodeType::SafetyBudget => Ok(NodeProps::SafetyBudget(de(value)?)),
+            NodeType::Custom(name) => {
+                let layer = value
+                    .get("_layer")
+                    .and_then(|v| serde_json::from_value::<Layer>(v.clone()).ok())
+                    .unwrap_or(Layer::Reality);
+                Ok(NodeProps::Custom {
+                    type_name: name.clone(),
+                    layer,
+                    data: value.clone(),
+                })
+            }
+        }
+    }
+
+    /// Get the layer for this props variant. For custom types, returns the stored layer.
+    pub fn layer(&self) -> Layer {
+        match self {
+            NodeProps::Custom { layer, .. } => *layer,
+            other => other.node_type().layer(),
         }
     }
 }

@@ -89,6 +89,9 @@ pub enum EdgeProps {
     ProducesNode {},
     GovernedByPolicy {},
     BudgetFor {},
+
+    // Extensible
+    Custom { type_name: String, data: serde_json::Value },
 }
 
 impl EdgeProps {
@@ -165,6 +168,7 @@ impl EdgeProps {
             EdgeProps::ProducesNode { .. } => EdgeType::ProducesNode,
             EdgeProps::GovernedByPolicy { .. } => EdgeType::GovernedByPolicy,
             EdgeProps::BudgetFor { .. } => EdgeType::BudgetFor,
+            EdgeProps::Custom { type_name, .. } => EdgeType::Custom(type_name.clone()),
         }
     }
 
@@ -241,11 +245,15 @@ impl EdgeProps {
             EdgeType::ProducesNode => EdgeProps::ProducesNode {},
             EdgeType::GovernedByPolicy => EdgeProps::GovernedByPolicy {},
             EdgeType::BudgetFor => EdgeProps::BudgetFor {},
+            EdgeType::Custom(name) => EdgeProps::Custom { type_name: name, data: serde_json::Value::Object(Default::default()) },
         }
     }
 
     /// Serialize edge props to JSON (without the tag).
     pub fn to_json(&self) -> serde_json::Value {
+        if let EdgeProps::Custom { data, .. } = self {
+            return data.clone();
+        }
         // Use serde to serialize, then strip the _type tag
         let mut v = serde_json::to_value(self).unwrap_or_default();
         if let Some(obj) = v.as_object_mut() {
@@ -341,6 +349,7 @@ impl EdgeProps {
             EdgeType::TraceEntry => EdgeProps::TraceEntry { order: get_i64("order") },
             EdgeType::AssignedTo => EdgeProps::AssignedTo { assigned_at: get_f64("assigned_at") },
             EdgeType::HasStep => EdgeProps::HasStep { order: get_i64("order") },
+            EdgeType::Custom(name) => EdgeProps::Custom { type_name: name.clone(), data: v },
             // Already handled above
             _ => unreachable!(),
         })

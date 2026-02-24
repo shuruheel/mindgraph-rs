@@ -4,8 +4,8 @@
 
 ```bash
 cargo build                              # Build the library
-cargo test                               # Run all tests (130 integration + 10 doc-tests)
-cargo test --features async              # Run all tests including async (130 + 2 async + 10 doc-tests)
+cargo test                               # Run all tests (146 integration + 13 doc-tests)
+cargo test --features async              # Run all tests including async (146 + 5 async + 13 doc-tests)
 cargo clippy --all-features -- -W clippy::all  # Lint (must produce 0 warnings)
 cargo doc --no-deps --all-features       # Build docs with doc-tests
 cargo bench                              # Run criterion benchmarks
@@ -27,12 +27,14 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - `src/query.rs` -- Query/result types: `Pagination`, `Page<T>`, `SearchOptions`, `NodeFilter`, `GraphStats`, `DecayResult`, `PropCondition`, `PropOp`, `TypedSnapshot`, `TypedImportResult`, `ValidatedBatch`, `PurgeResult`, `GraphSnapshot`, `ImportResult`, `MergeResult`, `GraphOp`, `BatchResult`, etc.
 - `src/types.rs` -- Core value types: `Uid`, `Confidence`, `Salience`, `PrivacyLevel`, `Timestamp`.
 - `src/provenance.rs` -- `ProvenanceRecord`, `ExtractionMethod`.
-- `src/embeddings.rs` -- `EmbeddingProvider` trait for pluggable embedding backends (sync; see doc comment for async guidance).
-- `src/events.rs` -- `GraphEvent` enum and `SubscriptionId` type for event subscriptions.
+- `src/embeddings.rs` -- `EmbeddingProvider` trait (sync) and `AsyncEmbeddingProvider` trait (behind `async` feature), plus `SyncProviderAdapter`.
+- `src/events.rs` -- `GraphEvent` enum, `SubscriptionId`, `EventKind`, `EventFilter` for filtered subscriptions.
+- `src/watch.rs` -- `WatchStream` async filtered event stream (behind `async` feature).
+- `src/agent.rs` -- `AgentHandle` scoped per-agent graph handle for multi-agent systems.
 - `src/openai.rs` -- `OpenAIEmbeddings` provider (behind `openai` feature flag).
 - `src/error.rs` -- `Error` enum and `Result<T>` alias.
-- `tests/integration.rs` -- 130 integration tests covering all features.
-- `tests/async_integration.rs` -- 2 async integration tests (behind `async` feature flag).
+- `tests/integration.rs` -- 146 integration tests covering all features.
+- `tests/async_integration.rs` -- 5 async integration tests (behind `async` feature flag).
 - `examples/basic.rs` -- Basic usage example (nodes, edges, queries, traversal).
 - `examples/agent_memory.rs` -- Agent memory example (sessions, preferences, summaries, decay).
 - `examples/embedding_search.rs` -- Embedding search example (mock provider, semantic search).
@@ -101,9 +103,35 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - Key `MindGraph` methods are instrumented with `#[cfg_attr(feature = "tracing", tracing::instrument(skip(self, ...)))]`.
 - Instrumented methods: `add_node`, `get_node`, `get_live_node`, `add_edge`, `tombstone`, `tombstone_cascade`, `search`, `find_nodes`, `reachable`, `reasoning_chain`, `semantic_search`, `embed_nodes`, `batch_apply`, `merge_entities`, `decay_salience`, `stats`.
 
+### Custom Types
+- `NodeType::Custom(String)` and `EdgeType::Custom(String)` allow user-defined types without forking the crate.
+- `CustomNodeType` trait: implement `type_name()` and `layer()` to register a custom type with typed ser/de.
+- `MindGraph::add_custom_node<T>(label, props)` wraps typed data into `NodeProps::Custom`.
+- `GraphNode::custom_props::<T>()` deserializes back to the original type.
+- **Breaking change (v0.6):** `NodeType` and `EdgeType` no longer implement `Copy` (they implement `Clone`).
+- Storage parsers fall back to `Custom(name)` for unknown type strings, enabling forward compatibility.
+
+### Multi-Agent
+- `AgentHandle` provides a scoped graph handle with a fixed agent identity.
+- Created via `graph.agent("alice")` (requires `Arc<MindGraph>`).
+- All mutation methods (`add_node`, `add_edge`, `tombstone`, etc.) auto-set `changed_by`.
+- `sub_agent("sub")` creates child handles with `parent_agent` tracking.
+- `my_nodes()` queries nodes created by this agent (via `node_version` where version=1).
+- `AsyncAgentHandle` wraps `AgentHandle` for async contexts.
+- Internal `_as` methods: `add_node_as`, `add_edge_as`, `tombstone_cascade_as`.
+
+### Filtered Events & Streaming
+- `EventKind` enum: `NodeAdded`, `NodeUpdated`, `NodeTombstoned`, `EdgeAdded`, `EdgeTombstoned`.
+- `EventFilter` with builder methods: `.node_types()`, `.edge_types()`, `.layers()`, `.event_kinds()`, `.agent()`.
+- `on_change_filtered(filter, cb)` for sync filtered subscriptions.
+- `MindGraph::watch(filter) -> WatchStream` (behind `async` feature) for async streaming via `tokio::sync::broadcast`.
+- `WatchStream::recv()` loops on broadcast receiver, applies filter, handles `Lagged` by continuing.
+
 ### Embeddings
 - `EmbeddingProvider` trait is sync; the `openai` feature uses blocking HTTP via `ureq`.
-- `AsyncMindGraph` wraps embedding calls via `spawn_blocking`.
+- `AsyncEmbeddingProvider` trait (behind `async` feature) for native async embedding without `spawn_blocking`.
+- `SyncProviderAdapter` wraps a sync `EmbeddingProvider` as an `AsyncEmbeddingProvider` via `spawn_blocking`.
+- `AsyncMindGraph` has both sync wrappers (`embed_node`, `semantic_search_text`) and native async methods (`embed_node_async`, `embed_nodes_async`, `semantic_search_text_async`).
 - `embed_nodes()` does bulk embedding: fetches live nodes, calls `embed_batch()`, stores vectors.
 - `semantic_search()` over-fetches and retries to compensate for tombstoned nodes (up to k*10).
 

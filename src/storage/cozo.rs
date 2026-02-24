@@ -2341,6 +2341,8 @@ impl CozoStorage {
         let tombstone_by = if ts_by.is_empty() { None } else { Some(ts_by) };
         let props_json = extract_json(&row[15])?;
         let props = NodeProps::from_json(&node_type, &props_json)?;
+        // For custom types, use the layer from the deserialized props
+        let layer = if node_type.is_custom() { props.layer() } else { layer };
 
         Ok(GraphNode {
             uid,
@@ -2477,6 +2479,31 @@ impl CozoStorage {
         Ok((nodes, has_more))
     }
 
+    // ---- v0.6: Multi-Agent ----
+
+    /// Query all live nodes created by a specific agent (version 1, changed_by == agent_id).
+    pub fn query_nodes_by_agent(&self, agent_id: &str) -> Result<Vec<GraphNode>> {
+        let script = r#"
+            ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
+              confidence, salience, privacy_level, embedding_ref,
+              tombstone_at, tombstone_reason, tombstone_by, props] :=
+                *node_version{node_uid, version: ver, changed_by},
+                ver == 1,
+                changed_by == $agent_id,
+                *node[node_uid, node_type, layer, label, summary, created_at, updated_at, version,
+                      confidence, salience, privacy_level, embedding_ref,
+                      tombstone_at, tombstone_reason, tombstone_by, props],
+                tombstone_at == 0.0,
+                uid = node_uid
+        "#;
+
+        let mut params = BTreeMap::new();
+        params.insert("agent_id".into(), str_val(agent_id));
+
+        let result = self.run_query(script, params)?;
+        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+    }
+
     // ---- v0.5: clear ----
 
     /// Delete all data from all relations. Destructive operation for testing/reset.
@@ -2601,7 +2628,7 @@ fn parse_node_type(s: &str) -> Result<NodeType> {
         "Policy" => Ok(NodeType::Policy),
         "Execution" => Ok(NodeType::Execution),
         "SafetyBudget" => Ok(NodeType::SafetyBudget),
-        _ => Err(Error::InvalidNodeType(s.to_string())),
+        other => Ok(NodeType::Custom(other.to_string())),
     }
 }
 
@@ -2677,7 +2704,7 @@ fn parse_edge_type(s: &str) -> Result<EdgeType> {
         "PRODUCES_NODE" => Ok(EdgeType::ProducesNode),
         "GOVERNED_BY_POLICY" => Ok(EdgeType::GovernedByPolicy),
         "BUDGET_FOR" => Ok(EdgeType::BudgetFor),
-        _ => Err(Error::InvalidEdgeType(s.to_string())),
+        other => Ok(EdgeType::Custom(other.to_string())),
     }
 }
 

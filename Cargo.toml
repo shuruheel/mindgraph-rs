@@ -1,3 +1,6 @@
+[workspace]
+members = ["mindgraph-server"]
+
 [package]
 name = "mindgraph"
 version = "0.6.1"

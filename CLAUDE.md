@@ -3,6 +3,7 @@
 ## Build & Test
 
 ```bash
+# Library crate
 cargo build                              # Build the library
 cargo test                               # Run all tests (158 integration + 13 doc-tests)
 cargo test --features async              # Run all tests including async (158 + 7 async + 13 doc-tests)
@@ -12,7 +13,12 @@ cargo bench                              # Run criterion benchmarks
 cargo run --example basic                # Run basic example
 cargo run --example agent_memory         # Run agent memory example
 cargo run --example embedding_search --features async  # Run embedding search example
-cargo publish --dry-run --allow-dirty    # Verify publishability
+cargo publish -p mindgraph --dry-run --allow-dirty    # Verify publishability (library only)
+
+# Server crate
+cargo build -p mindgraph-server          # Build the server
+cargo clippy -p mindgraph-server -- -W clippy::all  # Lint server (must produce 0 warnings)
+MINDGRAPH_DB_PATH=:memory: MINDGRAPH_TOKEN=test cargo run -p mindgraph-server  # Run server in-memory
 ```
 
 ## Project Structure
@@ -39,6 +45,16 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - `examples/agent_memory.rs` -- Agent memory example (sessions, preferences, summaries, decay).
 - `examples/embedding_search.rs` -- Embedding search example (mock provider, semantic search).
 - `benches/graph_bench.rs` -- Criterion benchmarks (insert, lookup, search, traversal, export/import).
+- `mindgraph-server/src/main.rs` -- Axum REST API server wrapping `AsyncMindGraph` (31 endpoints).
+- `mindgraph-server/Cargo.toml` -- Server binary crate manifest (depends on `mindgraph` with `async` feature).
+
+## Workspace Layout
+
+This repo is a Cargo workspace with two members:
+- **`mindgraph`** (root) -- Library crate, published to crates.io.
+- **`mindgraph-server`** -- Binary crate, not published. Thin Axum HTTP layer over `AsyncMindGraph`.
+
+`cargo publish -p mindgraph` publishes only the library. The server is a separate workspace member and is not included in the published crate tarball.
 
 ## Architecture & Conventions
 
@@ -160,3 +176,14 @@ cargo publish --dry-run --allow-dirty    # Verify publishability
 - Helper functions `make_*_node()` create common node types with sensible defaults.
 - Tests are grouped by feature area with `// ==== Phase N ====` section comments.
 - Async tests require `cargo test --features async`.
+
+### mindgraph-server Conventions
+- **Auth**: Bearer token middleware via `axum::middleware::from_fn_with_state`. Applied as `route_layer` on all routes except `/health`. New routes are automatically protected — no per-handler auth calls needed.
+- **Agent identity**: Each mutation handler extracts `agent_id` from the request body (defaults to `MINDGRAPH_DEFAULT_AGENT` env var or `"system"`). Mutations use `AsyncAgentHandle` via `graph.agent(&agent_id)`.
+- **Error handling**: `map_err_500()` logs via `tracing::error!` and returns JSON `{"error": "..."}`. `bad_request()` and `not_found()` for 4xx. All handlers return `Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>`.
+- **Enum parsing**: `parse_node_type()`, `parse_edge_type()`, `parse_layer()` helper functions convert strings to enums at handler boundaries. Unknown node/edge types fall through to `Custom(name)`. Unknown layers return `None` (400 error).
+- **UID conversion**: Incoming strings converted via `Uid::from(s.as_str())` at handler boundaries. Outgoing UIDs serialized automatically via serde.
+- **POST /node**: `props` field is `NodeProps` (serde-tagged union, not raw JSON). Callers include `{"_type": "Entity", ...}` in the props object.
+- **POST /link vs POST /edge**: `/link` takes an edge type string and uses `EdgeProps::default_for(edge_type)`. `/edge` takes full `EdgeProps` for setting specific edge fields.
+- **GET /nodes**: Returns `serde_json::Value` to unify two code paths — `Vec<GraphNode>` when filtered by agent (via `my_nodes()`) and `Page<GraphNode>` when using `find_nodes_paginated`.
+- **Defaults**: `ClaimRequest.confidence` defaults to 0.5 (not 1.0). `SessionRequest.focus` is `Option<String>` (unwrapped to empty string).

@@ -74,7 +74,7 @@ async fn test_async_watch_stream() {
     ).await.unwrap().unwrap();
 
     assert_eq!(event.kind(), EventKind::NodeAdded);
-    if let GraphEvent::NodeAdded(n) = &event {
+    if let GraphEvent::NodeAdded { node: n, .. } = &event {
         assert_eq!(n.uid, node.uid);
     } else {
         panic!("Expected NodeAdded event");
@@ -116,6 +116,54 @@ async fn test_async_custom_node() {
     let g = AsyncMindGraph::open_in_memory().await.unwrap();
     let node = g.add_custom_node("red widget".into(), Widget { color: "red".into() }).await.unwrap();
     assert_eq!(node.node_type, NodeType::Custom("Widget".into()));
-    let w: Widget = node.custom_props().unwrap();
+    let w: Widget = node.custom_props().unwrap().unwrap();
     assert_eq!(w.color, "red");
+}
+
+// ==== v0.6.1: Stream trait + event agent filtering ====
+
+#[tokio::test]
+async fn test_watch_stream_as_futures_stream() {
+    use futures_util::StreamExt;
+
+    let g = AsyncMindGraph::open_in_memory().await.unwrap();
+    let mut stream = g.watch(EventFilter::new().event_kinds(vec![EventKind::NodeAdded]));
+
+    // Add a node
+    let node = g.add_entity("StreamTest".into(), "test".into()).await.unwrap();
+
+    // Use StreamExt::next() to receive
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        stream.next(),
+    ).await.unwrap().unwrap();
+
+    assert_eq!(event.kind(), EventKind::NodeAdded);
+    if let GraphEvent::NodeAdded { node: n, .. } = &event {
+        assert_eq!(n.uid, node.uid);
+    } else {
+        panic!("Expected NodeAdded event");
+    }
+}
+
+#[tokio::test]
+async fn test_watch_mine_filters_by_agent() {
+    let g = AsyncMindGraph::open_in_memory().await.unwrap();
+    let alice = g.agent("alice");
+    let mut stream = alice.watch_mine();
+
+    // Add node as alice
+    alice.add_entity("Alice's node".into(), "test".into()).await.unwrap();
+
+    // Add node as bob (should NOT show up)
+    let bob = g.agent("bob");
+    bob.add_entity("Bob's node".into(), "test".into()).await.unwrap();
+
+    // Alice's event should come through
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        stream.recv(),
+    ).await.unwrap().unwrap();
+
+    assert_eq!(event.changed_by(), "alice");
 }

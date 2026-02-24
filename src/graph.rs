@@ -79,6 +79,38 @@ impl MindGraph {
         })
     }
 
+    /// Open a persistent graph with a custom broadcast channel capacity.
+    /// Requires the `async` feature.
+    #[cfg(feature = "async")]
+    pub fn open_with_broadcast_capacity(path: impl AsRef<Path>, capacity: usize) -> Result<Self> {
+        let storage = CozoStorage::open(path)?;
+        let dim = storage.get_embedding_dimension()?;
+        Ok(MindGraph {
+            storage,
+            default_agent: RwLock::new("system".into()),
+            embedding_dim: RwLock::new(dim),
+            next_sub_id: AtomicU64::new(1),
+            subscribers: RwLock::new(HashMap::new()),
+            broadcast_tx: tokio::sync::broadcast::channel(capacity).0,
+        })
+    }
+
+    /// Create an in-memory graph with a custom broadcast channel capacity.
+    /// Requires the `async` feature.
+    #[cfg(feature = "async")]
+    pub fn open_in_memory_with_broadcast_capacity(capacity: usize) -> Result<Self> {
+        let storage = CozoStorage::open_in_memory()?;
+        let dim = storage.get_embedding_dimension()?;
+        Ok(MindGraph {
+            storage,
+            default_agent: RwLock::new("system".into()),
+            embedding_dim: RwLock::new(dim),
+            next_sub_id: AtomicU64::new(1),
+            subscribers: RwLock::new(HashMap::new()),
+            broadcast_tx: tokio::sync::broadcast::channel(capacity).0,
+        })
+    }
+
     /// Wrap this graph in an `Arc` for sharing across threads.
     pub fn into_shared(self) -> Arc<MindGraph> {
         Arc::new(self)
@@ -143,11 +175,12 @@ impl MindGraph {
 
         self.storage.insert_node(&node)?;
 
+        let agent = self.default_agent();
         let snapshot = serde_json::to_value(&node)?;
         self.storage
-            .insert_node_version(&node.uid, 1, snapshot, "system", "create", "")?;
+            .insert_node_version(&node.uid, 1, snapshot, &agent, "create", "")?;
 
-        self.emit(GraphEvent::NodeAdded(Box::new(node.clone())));
+        self.emit(GraphEvent::NodeAdded { node: Box::new(node.clone()), changed_by: agent });
 
         Ok(node)
     }
@@ -217,7 +250,13 @@ impl MindGraph {
         self.storage
             .insert_node_version(&node.uid, node.version, snapshot, changed_by, "update", reason)?;
 
-        self.emit(GraphEvent::NodeUpdated { uid: node.uid.clone(), version: node.version });
+        self.emit(GraphEvent::NodeUpdated {
+            uid: node.uid.clone(),
+            version: node.version,
+            node_type: node.node_type.clone(),
+            layer: node.layer,
+            changed_by: changed_by.to_string(),
+        });
 
         Ok(node)
     }
@@ -308,11 +347,12 @@ impl MindGraph {
 
         self.storage.insert_edge(&edge)?;
 
+        let agent = self.default_agent();
         let snapshot = serde_json::to_value(&edge)?;
         self.storage
-            .insert_edge_version(&edge.uid, 1, snapshot, "system", "create", "")?;
+            .insert_edge_version(&edge.uid, 1, snapshot, &agent, "create", "")?;
 
-        self.emit(GraphEvent::EdgeAdded(Box::new(edge.clone())));
+        self.emit(GraphEvent::EdgeAdded { edge: Box::new(edge.clone()), changed_by: agent });
 
         Ok(edge)
     }
@@ -402,7 +442,12 @@ impl MindGraph {
         self.storage
             .insert_node_version(&node.uid, node.version, snapshot, by, "tombstone", reason)?;
 
-        self.emit(GraphEvent::NodeTombstoned(uid.clone()));
+        self.emit(GraphEvent::NodeTombstoned {
+            uid: uid.clone(),
+            node_type: node.node_type.clone(),
+            layer: node.layer,
+            changed_by: by.to_string(),
+        });
 
         Ok(())
     }
@@ -454,6 +499,7 @@ impl MindGraph {
             from_uid,
             to_uid,
             edge_type,
+            changed_by: by.to_string(),
         });
 
         Ok(())
@@ -851,10 +897,11 @@ impl MindGraph {
 
         self.storage.insert_nodes_batch(&nodes)?;
 
+        let agent = self.default_agent();
         for node in &nodes {
             let snapshot = serde_json::to_value(node)?;
             self.storage
-                .insert_node_version(&node.uid, 1, snapshot, "system", "create", "")?;
+                .insert_node_version(&node.uid, 1, snapshot, &agent, "create", "")?;
         }
 
         Ok(nodes)
@@ -904,10 +951,11 @@ impl MindGraph {
 
         self.storage.insert_edges_batch(&edges)?;
 
+        let agent = self.default_agent();
         for edge in &edges {
             let snapshot = serde_json::to_value(edge)?;
             self.storage
-                .insert_edge_version(&edge.uid, 1, snapshot, "system", "create", "")?;
+                .insert_edge_version(&edge.uid, 1, snapshot, &agent, "create", "")?;
         }
 
         Ok(edges)
@@ -1271,7 +1319,7 @@ impl MindGraph {
     ///     code: "fn main() {}".into(),
     /// }).unwrap();
     /// assert_eq!(node.node_type, NodeType::Custom("CodeSnippet".into()));
-    /// let props: CodeSnippet = node.custom_props().unwrap();
+    /// let props: CodeSnippet = node.custom_props().unwrap().unwrap();
     /// assert_eq!(props.language, "rust");
     /// ```
     pub fn add_custom_node<T: crate::schema::CustomNodeType>(
@@ -1741,7 +1789,7 @@ impl MindGraph {
         self.storage
             .insert_node_version(&node.uid, 1, snapshot, changed_by, "create", "")?;
 
-        self.emit(GraphEvent::NodeAdded(Box::new(node.clone())));
+        self.emit(GraphEvent::NodeAdded { node: Box::new(node.clone()), changed_by: changed_by.to_string() });
 
         Ok(node)
     }
@@ -1776,9 +1824,22 @@ impl MindGraph {
         self.storage
             .insert_edge_version(&edge.uid, 1, snapshot, changed_by, "create", "")?;
 
-        self.emit(GraphEvent::EdgeAdded(Box::new(edge.clone())));
+        self.emit(GraphEvent::EdgeAdded { edge: Box::new(edge.clone()), changed_by: changed_by.to_string() });
 
         Ok(edge)
+    }
+
+    /// Update an edge with an explicit agent identity in the version record.
+    pub fn update_edge_as(
+        &self,
+        uid: &Uid,
+        confidence: Option<Confidence>,
+        weight: Option<f64>,
+        props: Option<EdgeProps>,
+        changed_by: &str,
+        reason: &str,
+    ) -> Result<GraphEdge> {
+        self.update_edge(uid, confidence, weight, props, changed_by, reason)
     }
 
     /// Tombstone-cascade with an explicit agent identity.

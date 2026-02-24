@@ -75,6 +75,8 @@ pub mod watch;
 #[cfg(feature = "async")]
 pub use async_graph::{AsyncAgentHandle, AsyncMindGraph};
 #[cfg(feature = "async")]
+pub use futures_core::Stream;
+#[cfg(feature = "async")]
 pub use watch::WatchStream;
 
 #[cfg(feature = "openai")]

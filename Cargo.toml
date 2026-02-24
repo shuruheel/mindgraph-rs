@@ -1,6 +1,6 @@
 [package]
 name = "mindgraph"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 rust-version = "1.70"
 description = "A structured semantic memory graph for agentic systems"
@@ -17,7 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
-async = ["dep:tokio", "dep:async-trait"]
+async = ["dep:tokio", "dep:async-trait", "dep:futures-core"]
 openai = ["dep:ureq"]
 tracing = ["dep:tracing"]
 
@@ -30,6 +30,7 @@ thiserror = "2"
 smartstring = "1"
 tokio = { version = "1", features = ["rt", "sync"], optional = true }
 async-trait = { version = "0.1", optional = true }
+futures-core = { version = "0.3", optional = true }
 ureq = { version = "2", features = ["json"], optional = true }
 tracing = { version = "0.1", optional = true }
 
@@ -37,6 +38,7 @@ tracing = { version = "0.1", optional = true }
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+futures-util = "0.3"
 
 [[bench]]
 name = "graph_bench"

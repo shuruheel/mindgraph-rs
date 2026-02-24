@@ -941,6 +941,7 @@ impl AsyncMindGraph {
 ///
 /// All mutation methods are async via `spawn_blocking` and automatically
 /// set `changed_by` to this agent's identity.
+#[derive(Clone)]
 pub struct AsyncAgentHandle {
     handle: crate::agent::AgentHandle,
 }
@@ -968,6 +969,8 @@ impl AsyncAgentHandle {
         }
     }
 
+    // ---- Mutation methods (auto-set changed_by) ----
+
     /// Async version of [`AgentHandle::add_node`](crate::agent::AgentHandle::add_node).
     pub async fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
         let g = self.handle.graph_arc().clone();
@@ -994,6 +997,65 @@ impl AsyncAgentHandle {
             .await
             .map_err(join_err)?
     }
+
+    /// Async version of [`AgentHandle::tombstone_edge`](crate::agent::AgentHandle::tombstone_edge).
+    pub async fn tombstone_edge(&self, uid: Uid, reason: String) -> Result<()> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.tombstone_edge(&uid, &reason, &agent))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::tombstone_cascade`](crate::agent::AgentHandle::tombstone_cascade).
+    pub async fn tombstone_cascade(&self, uid: Uid, reason: String) -> Result<TombstoneResult> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.tombstone_cascade_as(&uid, &reason, &agent))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::update_node`](crate::agent::AgentHandle::update_node).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_node(
+        &self,
+        uid: Uid,
+        label: Option<String>,
+        summary: Option<String>,
+        confidence: Option<Confidence>,
+        salience: Option<Salience>,
+        props: Option<NodeProps>,
+        reason: String,
+    ) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || {
+            g.update_node(&uid, label, summary, confidence, salience, props, &agent, &reason)
+        })
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::update_edge`](crate::agent::AgentHandle::update_edge).
+    pub async fn update_edge(
+        &self,
+        uid: Uid,
+        confidence: Option<Confidence>,
+        weight: Option<f64>,
+        props: Option<EdgeProps>,
+        reason: String,
+    ) -> Result<GraphEdge> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || {
+            g.update_edge_as(&uid, confidence, weight, props, &agent, &reason)
+        })
+        .await
+        .map_err(join_err)?
+    }
+
+    // ---- Convenience constructors ----
 
     /// Async version of [`AgentHandle::add_entity`](crate::agent::AgentHandle::add_entity).
     pub async fn add_entity(&self, label: String, entity_type: String) -> Result<GraphNode> {
@@ -1026,10 +1088,162 @@ impl AsyncAgentHandle {
         .map_err(join_err)?
     }
 
+    /// Async version of [`AgentHandle::add_goal`](crate::agent::AgentHandle::add_goal).
+    pub async fn add_goal(&self, label: String, priority: String) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Goal(crate::schema::props::intent::GoalProps {
+                priority: Some(priority),
+                status: Some("active".to_string()),
+                ..Default::default()
+            })),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_observation`](crate::agent::AgentHandle::add_observation).
+    pub async fn add_observation(&self, label: String, description: String) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Observation(crate::schema::props::reality::ObservationProps {
+                content: description.clone(),
+                ..Default::default()
+            })).summary(description),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_session`](crate::agent::AgentHandle::add_session).
+    pub async fn add_session(&self, label: String, focus: String) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Session(crate::schema::props::memory::SessionProps {
+                focus_summary: Some(focus.clone()),
+                ..Default::default()
+            })).summary(focus),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_preference`](crate::agent::AgentHandle::add_preference).
+    pub async fn add_preference(&self, label: String, key: String, value: String) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Preference(crate::schema::props::memory::PreferenceProps {
+                key,
+                value,
+                ..Default::default()
+            })),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_summary`](crate::agent::AgentHandle::add_summary).
+    pub async fn add_summary(&self, label: String, content: String) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_node_as(
+            CreateNode::new(&label, NodeProps::Summary(crate::schema::props::memory::SummaryProps {
+                content: content.clone(),
+                ..Default::default()
+            })).summary(content),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::add_link`](crate::agent::AgentHandle::add_link).
+    pub async fn add_link(&self, from: Uid, to: Uid, edge_type: EdgeType) -> Result<GraphEdge> {
+        let g = self.handle.graph_arc().clone();
+        let agent = self.handle.agent_id().to_string();
+        tokio::task::spawn_blocking(move || g.add_edge_as(
+            CreateEdge::new(from, to, EdgeProps::default_for(edge_type)),
+            &agent,
+        ))
+        .await
+        .map_err(join_err)?
+    }
+
+    // ---- Read methods (delegate) ----
+
     /// Get a node by UID.
     pub async fn get_node(&self, uid: Uid) -> Result<Option<GraphNode>> {
         let g = self.handle.graph_arc().clone();
         tokio::task::spawn_blocking(move || g.get_node(&uid))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get a live node by UID.
+    pub async fn get_live_node(&self, uid: Uid) -> Result<GraphNode> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.get_live_node(&uid))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get an edge by UID.
+    pub async fn get_edge(&self, uid: Uid) -> Result<Option<GraphEdge>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.get_edge(&uid))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get live edges between two specific nodes.
+    pub async fn get_edge_between(
+        &self,
+        from_uid: Uid,
+        to_uid: Uid,
+        edge_type: Option<EdgeType>,
+    ) -> Result<Vec<GraphEdge>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.get_edge_between(&from_uid, &to_uid, edge_type))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get all edges from a node.
+    pub async fn edges_from(&self, uid: Uid, edge_type: Option<EdgeType>) -> Result<Vec<GraphEdge>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.edges_from(&uid, edge_type))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get all edges to a node.
+    pub async fn edges_to(&self, uid: Uid, edge_type: Option<EdgeType>) -> Result<Vec<GraphEdge>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.edges_to(&uid, edge_type))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Search nodes by text.
+    pub async fn search(&self, query: String, opts: SearchOptions) -> Result<Vec<SearchResult>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.search(&query, &opts))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Find nodes matching a filter.
+    pub async fn find_nodes(&self, filter: NodeFilter) -> Result<Vec<GraphNode>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.find_nodes(&filter))
             .await
             .map_err(join_err)?
     }
@@ -1042,6 +1256,72 @@ impl AsyncAgentHandle {
             .await
             .map_err(join_err)?
     }
+
+    // ---- Traversal ----
+
+    /// Get all nodes reachable from a starting node.
+    pub async fn reachable(&self, start: Uid, opts: TraversalOptions) -> Result<Vec<PathStep>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.reachable(&start, &opts))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Follow a reasoning chain from a claim node.
+    pub async fn reasoning_chain(&self, claim_uid: Uid, max_depth: u32) -> Result<Vec<PathStep>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.reasoning_chain(&claim_uid, max_depth))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Get the neighborhood of a node up to a given depth.
+    pub async fn neighborhood(&self, uid: Uid, depth: u32) -> Result<Vec<PathStep>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.neighborhood(&uid, depth))
+            .await
+            .map_err(join_err)?
+    }
+
+    // ---- History ----
+
+    /// Get the full version history for a node.
+    pub async fn node_history(&self, uid: Uid) -> Result<Vec<VersionRecord>> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.node_history(&uid))
+            .await
+            .map_err(join_err)?
+    }
+
+    // ---- Count / Exists ----
+
+    /// Count live nodes of a given type.
+    pub async fn count_nodes(&self, node_type: NodeType) -> Result<u64> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.count_nodes(node_type))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Check if a live (non-tombstoned) node exists.
+    pub async fn node_exists(&self, uid: Uid) -> Result<bool> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.node_exists(&uid))
+            .await
+            .map_err(join_err)?
+    }
+
+    // ---- Stats ----
+
+    /// Get graph-wide statistics.
+    pub async fn stats(&self) -> Result<GraphStats> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.stats())
+            .await
+            .map_err(join_err)?
+    }
+
+    // ---- Events ----
 
     /// Create an async filtered event stream.
     pub fn watch(&self, filter: crate::events::EventFilter) -> crate::watch::WatchStream {

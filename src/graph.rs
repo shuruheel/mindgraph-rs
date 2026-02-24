@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::embeddings::EmbeddingProvider;
 use crate::error::{Error, Result};
-use crate::events::{GraphEvent, SubscriptionId};
+use crate::events::{EventFilter, GraphEvent, SubscriptionId};
 use crate::provenance::ProvenanceRecord;
 use crate::query::{
     BatchResult, Contradiction, DecayResult, GraphOp, GraphSnapshot, GraphStats,
@@ -37,6 +37,8 @@ pub struct MindGraph {
     embedding_dim: RwLock<Option<usize>>,
     next_sub_id: AtomicU64,
     subscribers: RwLock<SubscriberMap>,
+    #[cfg(feature = "async")]
+    broadcast_tx: tokio::sync::broadcast::Sender<GraphEvent>,
 }
 
 impl MindGraph {
@@ -50,6 +52,8 @@ impl MindGraph {
             embedding_dim: RwLock::new(dim),
             next_sub_id: AtomicU64::new(1),
             subscribers: RwLock::new(HashMap::new()),
+            #[cfg(feature = "async")]
+            broadcast_tx: tokio::sync::broadcast::channel(1024).0,
         })
     }
 
@@ -70,6 +74,8 @@ impl MindGraph {
             embedding_dim: RwLock::new(dim),
             next_sub_id: AtomicU64::new(1),
             subscribers: RwLock::new(HashMap::new()),
+            #[cfg(feature = "async")]
+            broadcast_tx: tokio::sync::broadcast::channel(1024).0,
         })
     }
 
@@ -112,8 +118,8 @@ impl MindGraph {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, create)))]
     pub fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
+        let layer = create.props.layer();
         let node_type = create.props.node_type();
-        let layer = node_type.layer();
         let ts = now();
 
         let node = GraphNode {
@@ -432,7 +438,7 @@ impl MindGraph {
         let mut edge = self.get_live_edge(uid)?;
         let from_uid = edge.from_uid.clone();
         let to_uid = edge.to_uid.clone();
-        let edge_type = edge.edge_type;
+        let edge_type = edge.edge_type.clone();
         edge.tombstone_at = Some(now());
         edge.version += 1;
         edge.updated_at = now();
@@ -817,8 +823,8 @@ impl MindGraph {
         let mut nodes = Vec::with_capacity(creates.len());
 
         for create in creates {
+            let layer = create.props.layer();
             let node_type = create.props.node_type();
-            let layer = node_type.layer();
             let ts = now();
 
             let node = GraphNode {
@@ -1244,6 +1250,46 @@ impl MindGraph {
         )
     }
 
+    /// Add a node with a user-defined custom type.
+    ///
+    /// # Example
+    /// ```rust
+    /// use serde::{Serialize, Deserialize};
+    /// use mindgraph::*;
+    ///
+    /// #[derive(Debug, Clone, Serialize, Deserialize)]
+    /// struct CodeSnippet { language: String, code: String }
+    ///
+    /// impl CustomNodeType for CodeSnippet {
+    ///     fn type_name() -> &'static str { "CodeSnippet" }
+    ///     fn layer() -> Layer { Layer::Reality }
+    /// }
+    ///
+    /// let graph = MindGraph::open_in_memory().unwrap();
+    /// let node = graph.add_custom_node("hello.rs", CodeSnippet {
+    ///     language: "rust".into(),
+    ///     code: "fn main() {}".into(),
+    /// }).unwrap();
+    /// assert_eq!(node.node_type, NodeType::Custom("CodeSnippet".into()));
+    /// let props: CodeSnippet = node.custom_props().unwrap();
+    /// assert_eq!(props.language, "rust");
+    /// ```
+    pub fn add_custom_node<T: crate::schema::CustomNodeType>(
+        &self,
+        label: &str,
+        props: T,
+    ) -> Result<GraphNode> {
+        let data = serde_json::to_value(&props)?;
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Custom {
+                type_name: T::type_name().to_string(),
+                layer: T::layer(),
+                data,
+            },
+        ))
+    }
+
     /// Add a link (edge) between two nodes with default props for the given type.
     pub fn add_link(&self, from: &Uid, to: &Uid, edge_type: EdgeType) -> Result<GraphEdge> {
         self.add_edge(CreateEdge::new(
@@ -1446,11 +1492,37 @@ impl MindGraph {
         self.subscribers.write().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
 
+    /// Register a filtered callback for graph change events.
+    /// Only events matching the filter will be delivered.
+    pub fn on_change_filtered(
+        &self,
+        filter: EventFilter,
+        cb: impl Fn(&GraphEvent) + Send + Sync + 'static,
+    ) -> SubscriptionId {
+        self.on_change(move |event| {
+            if filter.matches(event) {
+                cb(event);
+            }
+        })
+    }
+
+    /// Create an async filtered event stream. Requires the `async` feature.
+    #[cfg(feature = "async")]
+    pub fn watch(&self, filter: EventFilter) -> crate::watch::WatchStream {
+        let rx = self.broadcast_tx.subscribe();
+        crate::watch::WatchStream::new(rx, filter)
+    }
+
     /// Emit a graph event to all subscribers.
     fn emit(&self, event: GraphEvent) {
         let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
         for cb in subs.values() {
             cb(&event);
+        }
+        #[cfg(feature = "async")]
+        {
+            // Ignore send error (no receivers)
+            let _ = self.broadcast_tx.send(event);
         }
     }
 
@@ -1628,6 +1700,102 @@ impl MindGraph {
             limit: page.limit,
             has_more,
         })
+    }
+
+    // ---- v0.6: Multi-Agent ----
+
+    /// Create a scoped agent handle bound to this graph.
+    /// Requires the graph to be wrapped in an `Arc`.
+    pub fn agent(self: &Arc<Self>, name: impl Into<String>) -> crate::agent::AgentHandle {
+        crate::agent::AgentHandle::new(self.clone(), name.into(), None)
+    }
+
+    /// Add a node with an explicit agent identity in the version record.
+    pub fn add_node_as(&self, create: CreateNode, changed_by: &str) -> Result<GraphNode> {
+        let layer = create.props.layer();
+        let node_type = create.props.node_type();
+        let ts = now();
+
+        let node = GraphNode {
+            uid: create.uid.unwrap_or_default(),
+            node_type,
+            layer,
+            label: create.label,
+            summary: create.summary,
+            created_at: ts,
+            updated_at: ts,
+            version: 1,
+            confidence: create.confidence,
+            salience: create.salience,
+            privacy_level: create.privacy_level,
+            embedding_ref: None,
+            tombstone_at: None,
+            tombstone_reason: None,
+            tombstone_by: None,
+            props: create.props,
+        };
+
+        self.storage.insert_node(&node)?;
+
+        let snapshot = serde_json::to_value(&node)?;
+        self.storage
+            .insert_node_version(&node.uid, 1, snapshot, changed_by, "create", "")?;
+
+        self.emit(GraphEvent::NodeAdded(Box::new(node.clone())));
+
+        Ok(node)
+    }
+
+    /// Add an edge with an explicit agent identity in the version record.
+    pub fn add_edge_as(&self, create: CreateEdge, changed_by: &str) -> Result<GraphEdge> {
+        let edge_type = create.props.edge_type();
+        let ts = now();
+
+        let from_node = self.get_live_node(&create.from_uid)?;
+        self.get_live_node(&create.to_uid)?;
+        let layer = from_node.layer;
+
+        let edge = GraphEdge {
+            uid: Uid::new(),
+            from_uid: create.from_uid,
+            to_uid: create.to_uid,
+            edge_type,
+            layer,
+            created_at: ts,
+            updated_at: ts,
+            version: 1,
+            confidence: create.confidence,
+            weight: create.weight,
+            tombstone_at: None,
+            props: create.props,
+        };
+
+        self.storage.insert_edge(&edge)?;
+
+        let snapshot = serde_json::to_value(&edge)?;
+        self.storage
+            .insert_edge_version(&edge.uid, 1, snapshot, changed_by, "create", "")?;
+
+        self.emit(GraphEvent::EdgeAdded(Box::new(edge.clone())));
+
+        Ok(edge)
+    }
+
+    /// Tombstone-cascade with an explicit agent identity.
+    pub fn tombstone_cascade_as(&self, uid: &Uid, reason: &str, by: &str) -> Result<TombstoneResult> {
+        let connected_edges = self.storage.query_edges_connected(uid)?;
+        let mut edges_tombstoned = 0;
+        for edge in &connected_edges {
+            self.tombstone_edge(&edge.uid, reason, by)?;
+            edges_tombstoned += 1;
+        }
+        self.tombstone(uid, reason, by)?;
+        Ok(TombstoneResult { edges_tombstoned })
+    }
+
+    /// Get all live nodes created by a specific agent.
+    pub fn nodes_by_agent(&self, agent_id: &str) -> Result<Vec<GraphNode>> {
+        self.storage.query_nodes_by_agent(agent_id)
     }
 
     /// Delete all data from the graph. **Destructive operation** intended for testing and reset.

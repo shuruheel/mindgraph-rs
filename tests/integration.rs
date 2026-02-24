@@ -2337,7 +2337,7 @@ fn test_find_nodes_multi_type() {
 
     let results = g.find_nodes(&NodeFilter::new().node_types(vec![NodeType::Claim, NodeType::Entity])).unwrap();
     assert_eq!(results.len(), 2);
-    let types: Vec<NodeType> = results.iter().map(|n| n.node_type).collect();
+    let types: Vec<NodeType> = results.iter().map(|n| n.node_type.clone()).collect();
     assert!(types.contains(&NodeType::Claim));
     assert!(types.contains(&NodeType::Entity));
 }
@@ -2713,4 +2713,303 @@ fn test_display_impls() {
     };
     write!(s, "{}", tir).unwrap();
     assert!(s.contains("nodes: +1"));
+}
+
+// ==== Phase v0.6: Custom Types ====
+
+#[test]
+fn test_custom_node_type() {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct CodeSnippet {
+        language: String,
+        code: String,
+    }
+
+    impl CustomNodeType for CodeSnippet {
+        fn type_name() -> &'static str { "CodeSnippet" }
+        fn layer() -> Layer { Layer::Reality }
+    }
+
+    let g = mem_graph();
+    let node = g.add_custom_node("hello.rs", CodeSnippet {
+        language: "rust".into(),
+        code: "fn main() {}".into(),
+    }).unwrap();
+
+    assert_eq!(node.node_type, NodeType::Custom("CodeSnippet".into()));
+    assert_eq!(node.layer, Layer::Reality);
+    assert_eq!(node.label, "hello.rs");
+
+    // Round-trip the props
+    let props: CodeSnippet = node.custom_props().unwrap();
+    assert_eq!(props.language, "rust");
+    assert_eq!(props.code, "fn main() {}");
+
+    // Verify it persists
+    let fetched = g.get_node(&node.uid).unwrap().unwrap();
+    assert_eq!(fetched.node_type, NodeType::Custom("CodeSnippet".into()));
+    let fetched_props: CodeSnippet = fetched.custom_props().unwrap();
+    assert_eq!(fetched_props.language, "rust");
+}
+
+#[test]
+fn test_custom_node_type_different_layer() {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct AgentState {
+        mood: String,
+    }
+
+    impl CustomNodeType for AgentState {
+        fn type_name() -> &'static str { "AgentState" }
+        fn layer() -> Layer { Layer::Agent }
+    }
+
+    let g = mem_graph();
+    let node = g.add_custom_node("happy-bot", AgentState {
+        mood: "happy".into(),
+    }).unwrap();
+
+    assert_eq!(node.layer, Layer::Agent);
+    assert_eq!(node.node_type, NodeType::Custom("AgentState".into()));
+}
+
+#[test]
+fn test_custom_edge_type() {
+    let g = mem_graph();
+    let a = g.add_entity("A", "test").unwrap();
+    let b = g.add_entity("B", "test").unwrap();
+
+    let edge = g.add_edge(CreateEdge::new(
+        a.uid.clone(), b.uid.clone(),
+        EdgeProps::Custom {
+            type_name: "SIMILAR_TO".into(),
+            data: serde_json::json!({"score": 0.95}),
+        },
+    )).unwrap();
+
+    assert_eq!(edge.edge_type, EdgeType::Custom("SIMILAR_TO".into()));
+    assert!(edge.edge_type.is_custom());
+
+    // Round-trip from storage
+    let fetched = g.get_edge(&edge.uid).unwrap().unwrap();
+    assert_eq!(fetched.edge_type, EdgeType::Custom("SIMILAR_TO".into()));
+    if let EdgeProps::Custom { type_name, data } = &fetched.props {
+        assert_eq!(type_name, "SIMILAR_TO");
+        assert_eq!(data["score"], 0.95);
+    } else {
+        panic!("Expected Custom edge props");
+    }
+}
+
+#[test]
+fn test_custom_node_is_custom() {
+    assert!(!NodeType::Claim.is_custom());
+    assert!(NodeType::Custom("Foo".into()).is_custom());
+    assert!(!EdgeType::Supports.is_custom());
+    assert!(EdgeType::Custom("BAR".into()).is_custom());
+}
+
+#[test]
+fn test_edge_default_for_custom() {
+    let edge_type = EdgeType::Custom("MY_EDGE".into());
+    let props = EdgeProps::default_for(edge_type.clone());
+    assert_eq!(props.edge_type(), edge_type);
+}
+
+#[test]
+fn test_node_type_no_copy_clone_works() {
+    let nt = NodeType::Entity;
+    let nt2 = nt.clone();
+    assert_eq!(nt, nt2);
+
+    let et = EdgeType::Supports;
+    let et2 = et.clone();
+    assert_eq!(et, et2);
+}
+
+// ==== Phase v0.6: Filtered Events ====
+
+#[test]
+fn test_event_filter_by_kind() {
+    let g = mem_graph();
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let r = received.clone();
+
+    g.on_change_filtered(
+        EventFilter::new().event_kinds(vec![EventKind::NodeAdded]),
+        move |event| {
+            r.lock().unwrap().push(event.kind());
+        },
+    );
+
+    g.add_entity("A", "test").unwrap();
+    let node = g.add_entity("B", "test").unwrap();
+    g.tombstone(&node.uid, "test", "test").unwrap();
+
+    let events = received.lock().unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events.iter().all(|k| *k == EventKind::NodeAdded));
+}
+
+#[test]
+fn test_event_filter_by_node_type() {
+    let g = mem_graph();
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let r = received.clone();
+
+    g.on_change_filtered(
+        EventFilter::new().node_types(vec![NodeType::Claim]),
+        move |event| {
+            r.lock().unwrap().push(event.kind());
+        },
+    );
+
+    g.add_entity("not a claim", "test").unwrap();
+    g.add_claim("a claim", "content", 0.9).unwrap();
+
+    let events = received.lock().unwrap();
+    // Only the claim should have triggered
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_event_kind() {
+    let g = mem_graph();
+    let node = g.add_entity("A", "test").unwrap();
+    let b = g.add_entity("B", "test").unwrap();
+    let edge = g.add_edge(CreateEdge::new(
+        node.uid.clone(), b.uid.clone(),
+        EdgeProps::Supports { strength: None, support_type: None },
+    )).unwrap();
+
+    // Test GraphEvent::kind()
+    let event = GraphEvent::NodeAdded(Box::new(node.clone()));
+    assert_eq!(event.kind(), EventKind::NodeAdded);
+
+    let event = GraphEvent::NodeUpdated { uid: node.uid.clone(), version: 2 };
+    assert_eq!(event.kind(), EventKind::NodeUpdated);
+
+    let event = GraphEvent::NodeTombstoned(node.uid.clone());
+    assert_eq!(event.kind(), EventKind::NodeTombstoned);
+
+    let event = GraphEvent::EdgeAdded(Box::new(edge.clone()));
+    assert_eq!(event.kind(), EventKind::EdgeAdded);
+
+    let event = GraphEvent::EdgeTombstoned {
+        uid: edge.uid.clone(),
+        from_uid: node.uid.clone(),
+        to_uid: b.uid.clone(),
+        edge_type: EdgeType::Supports,
+    };
+    assert_eq!(event.kind(), EventKind::EdgeTombstoned);
+}
+
+// ==== Phase v0.6: Multi-Agent ====
+
+#[test]
+fn test_agent_handle_basic() {
+    let g = std::sync::Arc::new(mem_graph());
+    let alice = g.agent("alice");
+
+    assert_eq!(alice.agent_id(), "alice");
+    assert!(alice.parent_agent().is_none());
+
+    let node = alice.add_entity("Alice's thing", "test").unwrap();
+    assert_eq!(node.label, "Alice's thing");
+
+    // The version record should show "alice"
+    let history = alice.graph().node_history(&node.uid).unwrap();
+    assert_eq!(history[0].changed_by, "alice");
+}
+
+#[test]
+fn test_agent_handle_sub_agent() {
+    let g = std::sync::Arc::new(mem_graph());
+    let parent = g.agent("parent");
+    let child = parent.sub_agent("child");
+
+    assert_eq!(child.agent_id(), "child");
+    assert_eq!(child.parent_agent(), Some("parent"));
+}
+
+#[test]
+fn test_agent_my_nodes() {
+    let g = std::sync::Arc::new(mem_graph());
+    let alice = g.agent("alice");
+    let bob = g.agent("bob");
+
+    alice.add_entity("Alice 1", "test").unwrap();
+    alice.add_entity("Alice 2", "test").unwrap();
+    bob.add_entity("Bob 1", "test").unwrap();
+
+    let alice_nodes = alice.my_nodes().unwrap();
+    assert_eq!(alice_nodes.len(), 2);
+    assert!(alice_nodes.iter().all(|n| n.label.starts_with("Alice")));
+
+    let bob_nodes = bob.my_nodes().unwrap();
+    assert_eq!(bob_nodes.len(), 1);
+    assert_eq!(bob_nodes[0].label, "Bob 1");
+}
+
+#[test]
+fn test_agent_handle_add_edge() {
+    let g = std::sync::Arc::new(mem_graph());
+    let agent = g.agent("agent-1");
+
+    let a = agent.add_entity("A", "test").unwrap();
+    let b = agent.add_entity("B", "test").unwrap();
+    let edge = agent.add_link(&a.uid, &b.uid, EdgeType::Supports).unwrap();
+
+    assert_eq!(edge.edge_type, EdgeType::Supports);
+
+    let history = agent.graph().edge_history(&edge.uid).unwrap();
+    assert_eq!(history[0].changed_by, "agent-1");
+}
+
+#[test]
+fn test_agent_handle_tombstone() {
+    let g = std::sync::Arc::new(mem_graph());
+    let agent = g.agent("cleanup-bot");
+
+    let node = agent.add_entity("To Delete", "test").unwrap();
+    agent.tombstone(&node.uid, "no longer needed").unwrap();
+
+    let fetched = agent.graph().get_node(&node.uid).unwrap().unwrap();
+    assert!(fetched.tombstone_at.is_some());
+    assert_eq!(fetched.tombstone_by.as_deref(), Some("cleanup-bot"));
+}
+
+#[test]
+fn test_agent_handle_convenience_constructors() {
+    let g = std::sync::Arc::new(mem_graph());
+    let agent = g.agent("tester");
+
+    let claim = agent.add_claim("test claim", "content", 0.8).unwrap();
+    assert_eq!(claim.node_type, NodeType::Claim);
+
+    let goal = agent.add_goal("test goal", "high").unwrap();
+    assert_eq!(goal.node_type, NodeType::Goal);
+}
+
+#[test]
+fn test_nodes_by_agent_public() {
+    let g = mem_graph();
+    // Use add_node_as directly
+    g.add_node_as(CreateNode::new("N1", NodeProps::Entity(EntityProps {
+        entity_type: "test".into(),
+        ..Default::default()
+    })), "agent-a").unwrap();
+
+    g.add_node_as(CreateNode::new("N2", NodeProps::Entity(EntityProps {
+        entity_type: "test".into(),
+        ..Default::default()
+    })), "agent-b").unwrap();
+
+    let a_nodes = g.nodes_by_agent("agent-a").unwrap();
+    assert_eq!(a_nodes.len(), 1);
+    assert_eq!(a_nodes[0].label, "N1");
 }

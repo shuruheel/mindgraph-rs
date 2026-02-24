@@ -56,6 +56,7 @@
 //! assert_eq!(chain[0].depth, 0);
 //! ```
 
+pub mod agent;
 pub mod embeddings;
 pub mod error;
 pub mod events;
@@ -70,7 +71,11 @@ pub mod types;
 #[cfg(feature = "async")]
 pub mod async_graph;
 #[cfg(feature = "async")]
-pub use async_graph::AsyncMindGraph;
+pub mod watch;
+#[cfg(feature = "async")]
+pub use async_graph::{AsyncAgentHandle, AsyncMindGraph};
+#[cfg(feature = "async")]
+pub use watch::WatchStream;
 
 #[cfg(feature = "openai")]
 pub mod openai;
@@ -78,9 +83,12 @@ pub mod openai;
 pub use openai::OpenAIEmbeddings;
 
 // Re-export the most commonly used types
+pub use agent::AgentHandle;
 pub use embeddings::EmbeddingProvider;
+#[cfg(feature = "async")]
+pub use embeddings::{AsyncEmbeddingProvider, SyncProviderAdapter};
 pub use error::{Error, Result};
-pub use events::{GraphEvent, SubscriptionId};
+pub use events::{EventFilter, EventKind, GraphEvent, SubscriptionId};
 pub use graph::MindGraph;
 pub use provenance::{ExtractionMethod, ProvenanceEntry, ProvenanceRecord};
 pub use query::{
@@ -93,7 +101,7 @@ pub use schema::edge::{CreateEdge, GraphEdge};
 pub use schema::edge_props::EdgeProps;
 pub use schema::node::{CreateNode, GraphNode};
 pub use schema::node_props::NodeProps;
-pub use schema::{EdgeType, Layer, NodeType};
+pub use schema::{CustomNodeType, EdgeType, Layer, NodeType};
 pub use traversal::{Direction, PathStep, TraversalOptions};
 pub use types::{now, Confidence, PrivacyLevel, Salience, Timestamp, Uid};
 

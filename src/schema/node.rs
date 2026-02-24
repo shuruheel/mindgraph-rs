@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::schema::node_props::NodeProps;
-use crate::schema::{Layer, NodeType};
+use crate::schema::{CustomNodeType, Layer, NodeType};
 use crate::types::{Confidence, PrivacyLevel, Salience, Timestamp, Uid};
 
 /// A node in the knowledge graph.
@@ -23,6 +23,19 @@ pub struct GraphNode {
     pub tombstone_reason: Option<String>,
     pub tombstone_by: Option<String>,
     pub props: NodeProps,
+}
+
+impl GraphNode {
+    /// Deserialize the custom props data back into a typed struct.
+    /// Returns `None` if this node is not a `Custom` type or the type name doesn't match.
+    pub fn custom_props<T: CustomNodeType>(&self) -> Option<T> {
+        if let NodeProps::Custom { type_name, data, .. } = &self.props {
+            if type_name == T::type_name() {
+                return serde_json::from_value(data.clone()).ok();
+            }
+        }
+        None
+    }
 }
 
 /// Builder for creating new nodes. `node_type` and `layer` are inferred from `props`.

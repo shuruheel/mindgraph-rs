@@ -31,8 +31,8 @@ impl Layer {
     }
 }
 
-/// All 48 node types across the six layers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// All node types across the six layers, plus extensible custom types.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeType {
     // Reality (4)
     Source,
@@ -97,6 +97,9 @@ pub enum NodeType {
     Policy,
     Execution,
     SafetyBudget,
+
+    // Extensible
+    Custom(String),
 }
 
 impl NodeType {
@@ -165,6 +168,9 @@ impl NodeType {
             | NodeType::Policy
             | NodeType::Execution
             | NodeType::SafetyBudget => Layer::Agent,
+
+            // Custom types default to Reality; callers override via NodeProps::Custom { layer, .. }
+            NodeType::Custom(_) => Layer::Reality,
         }
     }
 
@@ -222,7 +228,13 @@ impl NodeType {
             NodeType::Policy => "Policy",
             NodeType::Execution => "Execution",
             NodeType::SafetyBudget => "SafetyBudget",
+            NodeType::Custom(name) => name.as_str(),
         }
+    }
+
+    /// Returns true if this is a user-defined custom type.
+    pub fn is_custom(&self) -> bool {
+        matches!(self, NodeType::Custom(_))
     }
 
     pub fn requires_provenance(&self) -> bool {
@@ -236,8 +248,8 @@ impl std::fmt::Display for NodeType {
     }
 }
 
-/// All 70 edge types across layers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// All edge types across layers, plus extensible custom types.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EdgeType {
     // Structural (5)
     ExtractedFrom,
@@ -322,6 +334,9 @@ pub enum EdgeType {
     ProducesNode,
     GovernedByPolicy,
     BudgetFor,
+
+    // Extensible
+    Custom(String),
 }
 
 impl EdgeType {
@@ -397,7 +412,13 @@ impl EdgeType {
             EdgeType::ProducesNode => "PRODUCES_NODE",
             EdgeType::GovernedByPolicy => "GOVERNED_BY_POLICY",
             EdgeType::BudgetFor => "BUDGET_FOR",
+            EdgeType::Custom(name) => name.as_str(),
         }
+    }
+
+    /// Returns true if this is a user-defined custom type.
+    pub fn is_custom(&self) -> bool {
+        matches!(self, EdgeType::Custom(_))
     }
 }
 
@@ -405,4 +426,31 @@ impl std::fmt::Display for EdgeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
     }
+}
+
+/// Trait for compile-time registration of custom node types.
+///
+/// Implement this trait on a struct to use it with [`MindGraph::add_custom_node`](crate::MindGraph::add_custom_node).
+///
+/// # Example
+/// ```rust
+/// use serde::{Serialize, Deserialize};
+/// use mindgraph::{CustomNodeType, Layer};
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct CodeSnippet {
+///     language: String,
+///     code: String,
+/// }
+///
+/// impl CustomNodeType for CodeSnippet {
+///     fn type_name() -> &'static str { "CodeSnippet" }
+///     fn layer() -> Layer { Layer::Reality }
+/// }
+/// ```
+pub trait CustomNodeType: serde::Serialize + serde::de::DeserializeOwned + Send + Sync {
+    /// The string name stored in the database (e.g. `"CodeSnippet"`).
+    fn type_name() -> &'static str;
+    /// The layer this custom type belongs to.
+    fn layer() -> Layer;
 }

@@ -1045,9 +1045,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/summary", post(add_summary))
         // Generic node CRUD
         .route("/node", post(add_node))
-        .route("/node/{uid}", get(get_node))
-        .route("/node/{uid}", patch(update_node))
-        .route("/node/{uid}", delete(delete_node))
+        .route("/node/{uid}", get(get_node).patch(update_node).delete(delete_node))
         .route("/node/{uid}/history", get(get_node_history))
         .route("/node/{uid}/history/{version}", get(get_node_at_version))
         // Edges

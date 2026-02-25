@@ -1079,8 +1079,7 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
-        .with_state(state.clone())
-        .layer(middleware::from_fn_with_state(state, auth_middleware))
+        .with_state(state)
 }
 
 #[tokio::main]
@@ -1121,7 +1120,10 @@ async fn main() {
         .expect("failed to bind");
     tracing::info!("mindgraph-server listening on {bind_addr}:{port}");
 
-    axum::serve(listener, app(state))
+    let router = app(state.clone())
+        .layer(middleware::from_fn_with_state(state, auth_middleware));
+
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server error");

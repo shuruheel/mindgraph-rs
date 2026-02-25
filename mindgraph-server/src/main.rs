@@ -1054,28 +1054,28 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/summary", post(add_summary))
         // Generic node CRUD
         .route("/node", post(add_node))
-        .route("/node/:uid", get(get_node).patch(update_node).delete(delete_node))
-        .route("/node/:uid/history", get(get_node_history))
-        .route("/node/:uid/history/:version", get(get_node_at_version))
+        .route("/node/{uid}", get(get_node).patch(update_node).delete(delete_node))
+        .route("/node/{uid}/history", get(get_node_history))
+        .route("/node/{uid}/history/{version}", get(get_node_at_version))
         // Edges
         .route("/link", post(add_link))
         .route("/edge", post(add_edge))
-        .route("/edge/:uid", delete(delete_edge))
-        .route("/edge/:uid/history", get(get_edge_history))
+        .route("/edge/{uid}", delete(delete_edge))
+        .route("/edge/{uid}/history", get(get_edge_history))
         .route("/edges", get(get_edges))
         // Search & filter
         .route("/search", post(search))
         .route("/nodes", get(get_nodes))
         // Traversal
-        .route("/chain/:uid", get(get_chain))
-        .route("/neighborhood/:uid", get(get_neighborhood))
+        .route("/chain/{uid}", get(get_chain))
+        .route("/neighborhood/{uid}", get(get_neighborhood))
         .route("/path", get(get_path))
         // Agent
-        .route("/agent/:agent_id/nodes", get(get_agent_nodes))
+        .route("/agent/{agent_id}/nodes", get(get_agent_nodes))
         // Entity resolution
         .route("/entities/merge", post(merge_entities))
         .route("/alias", post(add_alias))
-        .route("/aliases/:uid", get(get_aliases))
+        .route("/aliases/{uid}", get(get_aliases))
         .route("/resolve", get(resolve_alias))
         // Export/import
         .route("/export", get(export_typed))

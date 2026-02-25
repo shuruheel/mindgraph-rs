@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use serde::de;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Unique identifier for nodes and edges.

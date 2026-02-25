@@ -23,7 +23,11 @@ pub struct WatchStream {
 
 impl WatchStream {
     pub(crate) fn new(rx: broadcast::Receiver<GraphEvent>, filter: EventFilter) -> Self {
-        Self { rx, filter, lagged: AtomicU64::new(0) }
+        Self {
+            rx,
+            filter,
+            lagged: AtomicU64::new(0),
+        }
     }
 
     /// Receive the next matching event. Returns `None` if the sender is dropped.

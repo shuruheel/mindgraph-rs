@@ -75,12 +75,28 @@ impl GraphEvent {
 impl fmt::Display for GraphEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GraphEvent::NodeAdded { node, .. } => write!(f, "NodeAdded({}, {})", node.uid, node.label),
-            GraphEvent::NodeUpdated { uid, version, .. } => write!(f, "NodeUpdated({}, v{})", uid, version),
+            GraphEvent::NodeAdded { node, .. } => {
+                write!(f, "NodeAdded({}, {})", node.uid, node.label)
+            }
+            GraphEvent::NodeUpdated { uid, version, .. } => {
+                write!(f, "NodeUpdated({}, v{})", uid, version)
+            }
             GraphEvent::NodeTombstoned { uid, .. } => write!(f, "NodeTombstoned({})", uid),
-            GraphEvent::EdgeAdded { edge, .. } => write!(f, "EdgeAdded({}, {})", edge.uid, edge.edge_type),
-            GraphEvent::EdgeTombstoned { uid, from_uid, to_uid, edge_type, .. } => {
-                write!(f, "EdgeTombstoned({}, {} -> {}, {})", uid, from_uid, to_uid, edge_type)
+            GraphEvent::EdgeAdded { edge, .. } => {
+                write!(f, "EdgeAdded({}, {})", edge.uid, edge.edge_type)
+            }
+            GraphEvent::EdgeTombstoned {
+                uid,
+                from_uid,
+                to_uid,
+                edge_type,
+                ..
+            } => {
+                write!(
+                    f,
+                    "EdgeTombstoned({}, {} -> {}, {})",
+                    uid, from_uid, to_uid, edge_type
+                )
             }
         }
     }
@@ -173,7 +189,9 @@ impl EventFilter {
                     }
                 }
             }
-            GraphEvent::NodeUpdated { node_type, layer, .. } => {
+            GraphEvent::NodeUpdated {
+                node_type, layer, ..
+            } => {
                 if let Some(ref types) = self.node_types {
                     if !types.contains(node_type) {
                         return false;
@@ -185,7 +203,9 @@ impl EventFilter {
                     }
                 }
             }
-            GraphEvent::NodeTombstoned { node_type, layer, .. } => {
+            GraphEvent::NodeTombstoned {
+                node_type, layer, ..
+            } => {
                 if let Some(ref types) = self.node_types {
                     if !types.contains(node_type) {
                         return false;

@@ -1,13 +1,13 @@
-pub mod reality;
+pub mod action;
+pub mod agent;
 pub mod epistemic;
 pub mod intent;
-pub mod action;
 pub mod memory;
-pub mod agent;
+pub mod reality;
 
-pub use reality::*;
+pub use action::*;
+pub use agent::*;
 pub use epistemic::*;
 pub use intent::*;
-pub use action::*;
 pub use memory::*;
-pub use agent::*;
+pub use reality::*;

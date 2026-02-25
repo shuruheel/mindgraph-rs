@@ -6,7 +6,9 @@ use mindgraph::*;
 struct MockEmbeddings;
 
 impl EmbeddingProvider for MockEmbeddings {
-    fn dimension(&self) -> usize { 4 }
+    fn dimension(&self) -> usize {
+        4
+    }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>> {
         // Simple hash-based mock embeddings
@@ -35,7 +37,12 @@ fn main() -> Result<()> {
 
     // Embed all nodes
     let provider = MockEmbeddings;
-    let uids = vec![n1.uid.clone(), n2.uid.clone(), n3.uid.clone(), n4.uid.clone()];
+    let uids = vec![
+        n1.uid.clone(),
+        n2.uid.clone(),
+        n3.uid.clone(),
+        n4.uid.clone(),
+    ];
     let count = graph.embed_nodes(&uids, &provider)?;
     println!("Embedded {} nodes", count);
 

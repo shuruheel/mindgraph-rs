@@ -8,13 +8,13 @@ use axum::{
     routing::{delete, get, patch, post},
     Json, Router,
 };
-use mindgraph::{
-    AsyncMindGraph, Confidence, CreateEdge, CreateNode, EdgeType, Layer, NodeFilter,
-    NodeProps, NodeType, Salience, SearchOptions, Timestamp, Uid,
-};
 use mindgraph::query::TypedSnapshot;
 use mindgraph::schema::edge_props::EdgeProps;
 use mindgraph::traversal::TraversalOptions;
+use mindgraph::{
+    AsyncMindGraph, Confidence, CreateEdge, CreateNode, EdgeType, Layer, NodeFilter, NodeProps,
+    NodeType, Salience, SearchOptions, Timestamp, Uid,
+};
 use serde::{Deserialize, Serialize};
 
 // ---- App State ----
@@ -34,16 +34,24 @@ fn map_err_500(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
     tracing::error!("internal error: {e}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse { error: e.to_string() }),
+        Json(ErrorResponse {
+            error: e.to_string(),
+        }),
     )
 }
 
 fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg.into() }))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse { error: msg.into() }),
+    )
 }
 
 fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
-    (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg.into() }))
+    (
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse { error: msg.into() }),
+    )
 }
 
 async fn auth_middleware(
@@ -62,7 +70,9 @@ async fn auth_middleware(
             _ => {
                 return Err((
                     StatusCode::UNAUTHORIZED,
-                    Json(ErrorResponse { error: "invalid or missing Bearer token".into() }),
+                    Json(ErrorResponse {
+                        error: "invalid or missing Bearer token".into(),
+                    }),
                 ));
             }
         }
@@ -500,7 +510,6 @@ async fn health() -> &'static str {
 async fn get_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let stats = state.graph.stats().await.map_err(map_err_500)?;
     Ok(Json(stats))
 }
@@ -509,7 +518,6 @@ async fn add_entity(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EntityRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_entity(req.label, req.entity_type)
@@ -522,7 +530,6 @@ async fn add_claim(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ClaimRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_claim(req.label, req.content, req.confidence)
@@ -535,7 +542,6 @@ async fn add_goal(
     State(state): State<Arc<AppState>>,
     Json(req): Json<GoalRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_goal(req.label, req.priority.unwrap_or_else(|| "medium".into()))
@@ -548,7 +554,6 @@ async fn add_preference(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PreferenceRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_preference(req.label, req.key, req.value)
@@ -561,7 +566,6 @@ async fn add_session(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SessionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_session(req.label, req.focus.unwrap_or_default())
@@ -574,7 +578,6 @@ async fn add_observation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ObservationRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_observation(req.label, req.content)
@@ -587,7 +590,6 @@ async fn add_summary(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SummaryRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&req.agent_id);
     let node = handle
         .add_summary(req.label, req.content)
@@ -600,7 +602,6 @@ async fn add_node(
     State(state): State<Arc<AppState>>,
     Json(req): Json<NodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let mut builder = CreateNode::new(&req.label, req.props);
     if let Some(s) = req.summary {
         builder = builder.summary(s);
@@ -620,7 +621,6 @@ async fn get_node(
     State(state): State<Arc<AppState>>,
     Path(uid): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let node = state
         .graph
         .get_node(Uid::from(uid.as_str()))
@@ -637,7 +637,6 @@ async fn update_node(
     Path(uid): Path<String>,
     Json(req): Json<UpdateNodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let conf = req
         .confidence
         .map(Confidence::new)
@@ -670,7 +669,6 @@ async fn delete_node(
     Path(uid): Path<String>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let result = state
         .graph
         .tombstone_cascade(Uid::from(uid.as_str()), q.reason, q.agent_id)
@@ -683,7 +681,6 @@ async fn add_link(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LinkRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let edge_type = parse_edge_type(&req.edge_type);
     let handle = state.graph.agent(&req.agent_id);
     let edge = handle
@@ -701,7 +698,6 @@ async fn add_edge(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EdgeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let mut builder = CreateEdge::new(
         Uid::from(req.from_uid.as_str()),
         Uid::from(req.to_uid.as_str()),
@@ -722,7 +718,6 @@ async fn get_edges(
     State(state): State<Arc<AppState>>,
     Query(q): Query<EdgesQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let et = q.edge_type.map(|s| parse_edge_type(&s));
     let edges = state
         .graph
@@ -736,7 +731,6 @@ async fn search(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SearchRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let mut opts = SearchOptions::new();
     if let Some(nt) = &req.node_type {
         opts.node_type = Some(parse_node_type(nt));
@@ -746,7 +740,11 @@ async fn search(
     }
     opts.limit = req.limit;
     opts.min_score = req.min_score;
-    let results = state.graph.search(req.query, opts).await.map_err(map_err_500)?;
+    let results = state
+        .graph
+        .search(req.query, opts)
+        .await
+        .map_err(map_err_500)?;
     Ok(Json(results))
 }
 
@@ -754,8 +752,6 @@ async fn get_nodes(
     State(state): State<Arc<AppState>>,
     Query(q): Query<NodesQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-
-
     // If agent filter is set, use my_nodes() via AgentHandle
     if let Some(agent) = &q.agent {
         let handle = state.graph.agent(agent);
@@ -793,7 +789,6 @@ async fn get_chain(
     Path(uid): Path<String>,
     Query(q): Query<ChainQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let steps = state
         .graph
         .reasoning_chain(Uid::from(uid.as_str()), q.max_depth)
@@ -807,7 +802,6 @@ async fn get_neighborhood(
     Path(uid): Path<String>,
     Query(q): Query<NeighborhoodQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let steps = state
         .graph
         .neighborhood(Uid::from(uid.as_str()), q.depth)
@@ -820,18 +814,13 @@ async fn get_path(
     State(state): State<Arc<AppState>>,
     Query(q): Query<PathQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let opts = TraversalOptions {
         max_depth: q.max_depth,
         ..Default::default()
     };
     let path = state
         .graph
-        .find_path(
-            Uid::from(q.from.as_str()),
-            Uid::from(q.to.as_str()),
-            opts,
-        )
+        .find_path(Uid::from(q.from.as_str()), Uid::from(q.to.as_str()), opts)
         .await
         .map_err(map_err_500)?;
     match path {
@@ -844,7 +833,6 @@ async fn get_agent_nodes(
     State(state): State<Arc<AppState>>,
     Path(agent_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let handle = state.graph.agent(&agent_id);
     let nodes = handle.my_nodes().await.map_err(map_err_500)?;
     Ok(Json(nodes))
@@ -854,7 +842,6 @@ async fn decay(
     State(state): State<Arc<AppState>>,
     Json(req): Json<DecayRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let result = state
         .graph
         .decay_salience(req.half_life_secs)
@@ -886,7 +873,6 @@ async fn get_node_history(
     State(state): State<Arc<AppState>>,
     Path(uid): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let history = state
         .graph
         .node_history(Uid::from(uid.as_str()))
@@ -899,7 +885,6 @@ async fn get_node_at_version(
     State(state): State<Arc<AppState>>,
     Path((uid, version)): Path<(String, i64)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let snapshot = state
         .graph
         .node_at_version(Uid::from(uid.as_str()), version)
@@ -915,7 +900,6 @@ async fn get_edge_history(
     State(state): State<Arc<AppState>>,
     Path(uid): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let history = state
         .graph
         .edge_history(Uid::from(uid.as_str()))
@@ -931,7 +915,6 @@ async fn delete_edge(
     Path(uid): Path<String>,
     Query(q): Query<EdgeDeleteQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     state
         .graph
         .tombstone_edge(Uid::from(uid.as_str()), q.reason, q.agent_id)
@@ -946,7 +929,6 @@ async fn merge_entities(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MergeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let result = state
         .graph
         .merge_entities(
@@ -964,10 +946,13 @@ async fn add_alias(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AliasRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     state
         .graph
-        .add_alias(req.alias, Uid::from(req.canonical_uid.as_str()), req.match_score)
+        .add_alias(
+            req.alias,
+            Uid::from(req.canonical_uid.as_str()),
+            req.match_score,
+        )
         .await
         .map_err(map_err_500)?;
     Ok(StatusCode::CREATED)
@@ -977,7 +962,6 @@ async fn get_aliases(
     State(state): State<Arc<AppState>>,
     Path(uid): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let aliases = state
         .graph
         .aliases_for(Uid::from(uid.as_str()))
@@ -990,7 +974,6 @@ async fn resolve_alias(
     State(state): State<Arc<AppState>>,
     Query(q): Query<FuzzyResolveQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let exact = state
         .graph
         .resolve_alias(q.text.clone())
@@ -1016,7 +999,6 @@ async fn resolve_alias(
 async fn export_typed(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let snapshot = state.graph.export_typed().await.map_err(map_err_500)?;
     Ok(Json(snapshot))
 }
@@ -1025,8 +1007,11 @@ async fn import_typed(
     State(state): State<Arc<AppState>>,
     Json(snapshot): Json<TypedSnapshot>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
-    let result = state.graph.import_typed(snapshot).await.map_err(map_err_500)?;
+    let result = state
+        .graph
+        .import_typed(snapshot)
+        .await
+        .map_err(map_err_500)?;
     Ok(Json(result))
 }
 
@@ -1036,7 +1021,6 @@ async fn purge(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PurgeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-
     let result = state
         .graph
         .purge_tombstoned(req.older_than)
@@ -1092,7 +1076,10 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
 
     // Health check is unauthenticated
     Router::new()

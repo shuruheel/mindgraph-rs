@@ -68,10 +68,10 @@ async fn test_async_watch_stream() {
     // Add a node and check we get the event
     let node = g.add_entity("Test".into(), "test".into()).await.unwrap();
 
-    let event = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        stream.recv(),
-    ).await.unwrap().unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), stream.recv())
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(event.kind(), EventKind::NodeAdded);
     if let GraphEvent::NodeAdded { node: n, .. } = &event {
@@ -90,7 +90,10 @@ async fn test_async_agent_handle() {
 
     assert_eq!(alice.agent_id(), "alice");
 
-    let node = alice.add_entity("Test Entity".into(), "test".into()).await.unwrap();
+    let node = alice
+        .add_entity("Test Entity".into(), "test".into())
+        .await
+        .unwrap();
     assert_eq!(node.label, "Test Entity");
 
     let my = alice.my_nodes().await.unwrap();
@@ -102,19 +105,31 @@ async fn test_async_agent_handle() {
 
 #[tokio::test]
 async fn test_async_custom_node() {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct Widget {
         color: String,
     }
     impl CustomNodeType for Widget {
-        fn type_name() -> &'static str { "Widget" }
-        fn layer() -> Layer { Layer::Reality }
+        fn type_name() -> &'static str {
+            "Widget"
+        }
+        fn layer() -> Layer {
+            Layer::Reality
+        }
     }
 
     let g = AsyncMindGraph::open_in_memory().await.unwrap();
-    let node = g.add_custom_node("red widget".into(), Widget { color: "red".into() }).await.unwrap();
+    let node = g
+        .add_custom_node(
+            "red widget".into(),
+            Widget {
+                color: "red".into(),
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(node.node_type, NodeType::Custom("Widget".into()));
     let w: Widget = node.custom_props().unwrap().unwrap();
     assert_eq!(w.color, "red");
@@ -130,13 +145,16 @@ async fn test_watch_stream_as_futures_stream() {
     let mut stream = g.watch(EventFilter::new().event_kinds(vec![EventKind::NodeAdded]));
 
     // Add a node
-    let node = g.add_entity("StreamTest".into(), "test".into()).await.unwrap();
+    let node = g
+        .add_entity("StreamTest".into(), "test".into())
+        .await
+        .unwrap();
 
     // Use StreamExt::next() to receive
-    let event = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        stream.next(),
-    ).await.unwrap().unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(event.kind(), EventKind::NodeAdded);
     if let GraphEvent::NodeAdded { node: n, .. } = &event {
@@ -153,17 +171,22 @@ async fn test_watch_mine_filters_by_agent() {
     let mut stream = alice.watch_mine();
 
     // Add node as alice
-    alice.add_entity("Alice's node".into(), "test".into()).await.unwrap();
+    alice
+        .add_entity("Alice's node".into(), "test".into())
+        .await
+        .unwrap();
 
     // Add node as bob (should NOT show up)
     let bob = g.agent("bob");
-    bob.add_entity("Bob's node".into(), "test".into()).await.unwrap();
+    bob.add_entity("Bob's node".into(), "test".into())
+        .await
+        .unwrap();
 
     // Alice's event should come through
-    let event = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        stream.recv(),
-    ).await.unwrap().unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), stream.recv())
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(event.changed_by(), "alice");
 }

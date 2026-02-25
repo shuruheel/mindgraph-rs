@@ -20,7 +20,6 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
         tombstone_by: String default '',
         props: Json default {}
     }"#,
-
     // Core edge relation
     r#":create edge {
         uid: String
@@ -37,7 +36,6 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
         tombstone_at: Float default 0.0,
         props: Json default {}
     }"#,
-
     // Node version history (append-only)
     r#":create node_version {
         node_uid: String,
@@ -49,7 +47,6 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
         change_type: String,
         change_reason: String default ''
     }"#,
-
     // Edge version history (append-only)
     r#":create edge_version {
         edge_uid: String,
@@ -61,7 +58,6 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
         change_type: String,
         change_reason: String default ''
     }"#,
-
     // Provenance tracking
     r#":create provenance {
         node_uid: String,
@@ -74,7 +70,6 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
         extracted_by: String default '',
         extracted_at: Float
     }"#,
-
     // Entity alias table for dedup
     r#":create alias {
         alias_text: String,
@@ -83,25 +78,19 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
         match_score: Float default 1.0,
         created_at: Float
     }"#,
-
     // Key-value metadata store
     r#":create mg_meta { key: String => value: String }"#,
-
     // Indices for edge traversal
     "::index create edge:from_idx {from_uid, edge_type}",
     "::index create edge:to_idx {to_uid, edge_type}",
     "::index create edge:type_idx {edge_type}",
-
     // Indices for node lookup
     "::index create node:type_idx {node_type}",
     "::index create node:layer_idx {layer}",
-
     // Index for provenance queries
     "::index create provenance:source_idx {source_uid}",
-
     // Index for alias resolution
     "::index create alias:canonical_idx {canonical_uid}",
-
     // Full-text search indices on node label and summary
     "::fts create node:label_fts { extractor: label, tokenizer: Simple, filters: [Lowercase] }",
     "::fts create node:summary_fts { extractor: summary, tokenizer: Simple, filters: [Lowercase] }",

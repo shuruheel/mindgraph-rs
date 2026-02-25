@@ -94,10 +94,10 @@ pub use events::{EventFilter, EventKind, GraphEvent, SubscriptionId};
 pub use graph::MindGraph;
 pub use provenance::{ExtractionMethod, ProvenanceEntry, ProvenanceRecord};
 pub use query::{
-    BatchResult, Contradiction, DecayResult, GraphOp, GraphSnapshot, GraphStats,
-    ImportResult, MergeResult, NodeFilter, Page, Pagination, PropCondition, PropOp,
-    PurgeResult, SearchOptions, SearchResult, TombstoneResult, TypedImportResult,
-    TypedSnapshot, ValidatedBatch, VersionRecord, WeakClaim,
+    BatchResult, Contradiction, DecayResult, GraphOp, GraphSnapshot, GraphStats, ImportResult,
+    MergeResult, NodeFilter, Page, Pagination, PropCondition, PropOp, PurgeResult, SearchOptions,
+    SearchResult, TombstoneResult, TypedImportResult, TypedSnapshot, ValidatedBatch, VersionRecord,
+    WeakClaim,
 };
 pub use schema::edge::{CreateEdge, GraphEdge};
 pub use schema::edge_props::EdgeProps;

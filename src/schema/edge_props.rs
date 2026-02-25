@@ -7,81 +7,192 @@ use crate::schema::EdgeType;
 #[serde(tag = "_type")]
 pub enum EdgeProps {
     // Structural
-    ExtractedFrom { location: Option<String>, method: Option<String>, confidence: Option<f64> },
-    PartOf { role: Option<String> },
-    HasPart { role: Option<String> },
+    ExtractedFrom {
+        location: Option<String>,
+        method: Option<String>,
+        confidence: Option<f64>,
+    },
+    PartOf {
+        role: Option<String>,
+    },
+    HasPart {
+        role: Option<String>,
+    },
     InstanceOf {},
     Contains {},
 
     // Epistemic
-    Supports { strength: Option<f64>, support_type: Option<String> },
-    Refutes { strength: Option<f64>, refutation_type: Option<String> },
-    Justifies { necessity: Option<String> },
-    HasPremise { order: Option<i64>, role: Option<String> },
+    Supports {
+        strength: Option<f64>,
+        support_type: Option<String>,
+    },
+    Refutes {
+        strength: Option<f64>,
+        refutation_type: Option<String>,
+    },
+    Justifies {
+        necessity: Option<String>,
+    },
+    HasPremise {
+        order: Option<i64>,
+        role: Option<String>,
+    },
     HasConclusion {},
     HasWarrant {},
-    Rebuts { defeat_type: Option<String>, rebuttal_type: Option<String>, content: Option<String>, strength: Option<f64> },
-    Assumes { necessity: Option<String> },
-    Tests { outcome: Option<String>, test_type: Option<String> },
+    Rebuts {
+        defeat_type: Option<String>,
+        rebuttal_type: Option<String>,
+        content: Option<String>,
+        strength: Option<f64>,
+    },
+    Assumes {
+        necessity: Option<String>,
+    },
+    Tests {
+        outcome: Option<String>,
+        test_type: Option<String>,
+    },
     Produces {},
-    UsesMethod { variant: Option<String> },
-    Addresses { completeness: Option<String> },
+    UsesMethod {
+        variant: Option<String>,
+    },
+    Addresses {
+        completeness: Option<String>,
+    },
     Generates {},
-    Extends { extension_type: Option<String> },
-    Supersedes { supersession_type: Option<String> },
-    Contradicts { description: Option<String>, contradiction_type: Option<String>, resolution_status: Option<String>, proposed_resolution: Option<String> },
-    AnomalousTo { severity: Option<String> },
-    AnalogousTo { mapping_type: Option<String>, strength: Option<f64> },
+    Extends {
+        extension_type: Option<String>,
+    },
+    Supersedes {
+        supersession_type: Option<String>,
+    },
+    Contradicts {
+        description: Option<String>,
+        contradiction_type: Option<String>,
+        resolution_status: Option<String>,
+        proposed_resolution: Option<String>,
+    },
+    AnomalousTo {
+        severity: Option<String>,
+    },
+    AnalogousTo {
+        mapping_type: Option<String>,
+        strength: Option<f64>,
+    },
     Instantiates {},
-    TransfersTo { success: Option<bool>, adaptations: Option<String> },
-    Evaluates { evaluation_context: Option<String> },
-    Outperforms { metric: Option<String>, margin: Option<f64>, conditions: Option<String> },
-    FailsOn { failure_mode: Option<String>, severity: Option<String> },
-    HasChainStep { order: Option<i64>, step_confidence: Option<f64>, cumulative_confidence: Option<f64> },
-    PropagatesUncertaintyTo { propagation_factor: Option<f64>, propagation_type: Option<String> },
-    SensitiveTo { elasticity: Option<f64>, direction: Option<String>, threshold: Option<f64> },
-    RobustAcross { variation_type: Option<String>, range_tested: Option<String> },
+    TransfersTo {
+        success: Option<bool>,
+        adaptations: Option<String>,
+    },
+    Evaluates {
+        evaluation_context: Option<String>,
+    },
+    Outperforms {
+        metric: Option<String>,
+        margin: Option<f64>,
+        conditions: Option<String>,
+    },
+    FailsOn {
+        failure_mode: Option<String>,
+        severity: Option<String>,
+    },
+    HasChainStep {
+        order: Option<i64>,
+        step_confidence: Option<f64>,
+        cumulative_confidence: Option<f64>,
+    },
+    PropagatesUncertaintyTo {
+        propagation_factor: Option<f64>,
+        propagation_type: Option<String>,
+    },
+    SensitiveTo {
+        elasticity: Option<f64>,
+        direction: Option<String>,
+        threshold: Option<f64>,
+    },
+    RobustAcross {
+        variation_type: Option<String>,
+        range_tested: Option<String>,
+    },
     Describes {},
     DerivedFrom {},
     ReliesOn {},
     ProvenBy {},
 
     // Provenance
-    ProposedBy { date: Option<String>, context: Option<String> },
-    AuthoredBy { position: Option<String>, contribution: Option<String> },
-    CitedBy { citation_type: Option<String>, context: Option<String> },
-    BelievedBy { confidence: Option<f64>, basis: Option<String>, as_of_date: Option<String> },
-    ConsensusIn { consensus_level: Option<String>, as_of_date: Option<String> },
+    ProposedBy {
+        date: Option<String>,
+        context: Option<String>,
+    },
+    AuthoredBy {
+        position: Option<String>,
+        contribution: Option<String>,
+    },
+    CitedBy {
+        citation_type: Option<String>,
+        context: Option<String>,
+    },
+    BelievedBy {
+        confidence: Option<f64>,
+        basis: Option<String>,
+        as_of_date: Option<String>,
+    },
+    ConsensusIn {
+        consensus_level: Option<String>,
+        as_of_date: Option<String>,
+    },
 
     // Intent
-    DecomposesInto { order: Option<i64> },
+    DecomposesInto {
+        order: Option<i64>,
+    },
     MotivatedBy {},
     HasOption {},
-    DecidedOn { rationale: Option<String> },
+    DecidedOn {
+        rationale: Option<String>,
+    },
     ConstrainedBy {},
     Blocks {},
-    Informs { relevance: Option<f64> },
-    RelevantTo { relevance_score: Option<f64> },
-    DependsOn { dependency_type: Option<String> },
+    Informs {
+        relevance: Option<f64>,
+    },
+    RelevantTo {
+        relevance_score: Option<f64>,
+    },
+    DependsOn {
+        dependency_type: Option<String>,
+    },
 
     // Action
     AvailableOn {},
-    ComposedOf { order: Option<i64> },
+    ComposedOf {
+        order: Option<i64>,
+    },
     StepUses {},
     RiskAssessedBy {},
-    Controls { interaction_type: Option<String> },
+    Controls {
+        interaction_type: Option<String>,
+    },
 
     // Memory
-    CapturedIn { position: Option<i64> },
-    TraceEntry { order: Option<i64> },
+    CapturedIn {
+        position: Option<i64>,
+    },
+    TraceEntry {
+        order: Option<i64>,
+    },
     Summarizes {},
     Recalls {},
     GovernedBy {},
 
     // Agent
-    AssignedTo { assigned_at: Option<f64> },
+    AssignedTo {
+        assigned_at: Option<f64>,
+    },
     PlannedBy {},
-    HasStep { order: Option<i64> },
+    HasStep {
+        order: Option<i64>,
+    },
     Targets {},
     RequiresApproval {},
     ExecutedBy {},
@@ -91,7 +202,10 @@ pub enum EdgeProps {
     BudgetFor {},
 
     // Extensible
-    Custom { type_name: String, data: serde_json::Value },
+    Custom {
+        type_name: String,
+        data: serde_json::Value,
+    },
 }
 
 impl EdgeProps {
@@ -175,47 +289,122 @@ impl EdgeProps {
     /// Create a default EdgeProps for the given EdgeType (all fields None/default).
     pub fn default_for(edge_type: EdgeType) -> Self {
         match edge_type {
-            EdgeType::ExtractedFrom => EdgeProps::ExtractedFrom { location: None, method: None, confidence: None },
+            EdgeType::ExtractedFrom => EdgeProps::ExtractedFrom {
+                location: None,
+                method: None,
+                confidence: None,
+            },
             EdgeType::PartOf => EdgeProps::PartOf { role: None },
             EdgeType::HasPart => EdgeProps::HasPart { role: None },
             EdgeType::InstanceOf => EdgeProps::InstanceOf {},
             EdgeType::Contains => EdgeProps::Contains {},
-            EdgeType::Supports => EdgeProps::Supports { strength: None, support_type: None },
-            EdgeType::Refutes => EdgeProps::Refutes { strength: None, refutation_type: None },
+            EdgeType::Supports => EdgeProps::Supports {
+                strength: None,
+                support_type: None,
+            },
+            EdgeType::Refutes => EdgeProps::Refutes {
+                strength: None,
+                refutation_type: None,
+            },
             EdgeType::Justifies => EdgeProps::Justifies { necessity: None },
-            EdgeType::HasPremise => EdgeProps::HasPremise { order: None, role: None },
+            EdgeType::HasPremise => EdgeProps::HasPremise {
+                order: None,
+                role: None,
+            },
             EdgeType::HasConclusion => EdgeProps::HasConclusion {},
             EdgeType::HasWarrant => EdgeProps::HasWarrant {},
-            EdgeType::Rebuts => EdgeProps::Rebuts { defeat_type: None, rebuttal_type: None, content: None, strength: None },
+            EdgeType::Rebuts => EdgeProps::Rebuts {
+                defeat_type: None,
+                rebuttal_type: None,
+                content: None,
+                strength: None,
+            },
             EdgeType::Assumes => EdgeProps::Assumes { necessity: None },
-            EdgeType::Tests => EdgeProps::Tests { outcome: None, test_type: None },
+            EdgeType::Tests => EdgeProps::Tests {
+                outcome: None,
+                test_type: None,
+            },
             EdgeType::Produces => EdgeProps::Produces {},
             EdgeType::UsesMethod => EdgeProps::UsesMethod { variant: None },
             EdgeType::Addresses => EdgeProps::Addresses { completeness: None },
             EdgeType::Generates => EdgeProps::Generates {},
-            EdgeType::Extends => EdgeProps::Extends { extension_type: None },
-            EdgeType::Supersedes => EdgeProps::Supersedes { supersession_type: None },
-            EdgeType::Contradicts => EdgeProps::Contradicts { description: None, contradiction_type: None, resolution_status: None, proposed_resolution: None },
+            EdgeType::Extends => EdgeProps::Extends {
+                extension_type: None,
+            },
+            EdgeType::Supersedes => EdgeProps::Supersedes {
+                supersession_type: None,
+            },
+            EdgeType::Contradicts => EdgeProps::Contradicts {
+                description: None,
+                contradiction_type: None,
+                resolution_status: None,
+                proposed_resolution: None,
+            },
             EdgeType::AnomalousTo => EdgeProps::AnomalousTo { severity: None },
-            EdgeType::AnalogousTo => EdgeProps::AnalogousTo { mapping_type: None, strength: None },
+            EdgeType::AnalogousTo => EdgeProps::AnalogousTo {
+                mapping_type: None,
+                strength: None,
+            },
             EdgeType::Instantiates => EdgeProps::Instantiates {},
-            EdgeType::TransfersTo => EdgeProps::TransfersTo { success: None, adaptations: None },
-            EdgeType::Evaluates => EdgeProps::Evaluates { evaluation_context: None },
-            EdgeType::Outperforms => EdgeProps::Outperforms { metric: None, margin: None, conditions: None },
-            EdgeType::FailsOn => EdgeProps::FailsOn { failure_mode: None, severity: None },
-            EdgeType::HasChainStep => EdgeProps::HasChainStep { order: None, step_confidence: None, cumulative_confidence: None },
-            EdgeType::PropagatesUncertaintyTo => EdgeProps::PropagatesUncertaintyTo { propagation_factor: None, propagation_type: None },
-            EdgeType::SensitiveTo => EdgeProps::SensitiveTo { elasticity: None, direction: None, threshold: None },
-            EdgeType::RobustAcross => EdgeProps::RobustAcross { variation_type: None, range_tested: None },
+            EdgeType::TransfersTo => EdgeProps::TransfersTo {
+                success: None,
+                adaptations: None,
+            },
+            EdgeType::Evaluates => EdgeProps::Evaluates {
+                evaluation_context: None,
+            },
+            EdgeType::Outperforms => EdgeProps::Outperforms {
+                metric: None,
+                margin: None,
+                conditions: None,
+            },
+            EdgeType::FailsOn => EdgeProps::FailsOn {
+                failure_mode: None,
+                severity: None,
+            },
+            EdgeType::HasChainStep => EdgeProps::HasChainStep {
+                order: None,
+                step_confidence: None,
+                cumulative_confidence: None,
+            },
+            EdgeType::PropagatesUncertaintyTo => EdgeProps::PropagatesUncertaintyTo {
+                propagation_factor: None,
+                propagation_type: None,
+            },
+            EdgeType::SensitiveTo => EdgeProps::SensitiveTo {
+                elasticity: None,
+                direction: None,
+                threshold: None,
+            },
+            EdgeType::RobustAcross => EdgeProps::RobustAcross {
+                variation_type: None,
+                range_tested: None,
+            },
             EdgeType::Describes => EdgeProps::Describes {},
             EdgeType::DerivedFrom => EdgeProps::DerivedFrom {},
             EdgeType::ReliesOn => EdgeProps::ReliesOn {},
             EdgeType::ProvenBy => EdgeProps::ProvenBy {},
-            EdgeType::ProposedBy => EdgeProps::ProposedBy { date: None, context: None },
-            EdgeType::AuthoredBy => EdgeProps::AuthoredBy { position: None, contribution: None },
-            EdgeType::CitedBy => EdgeProps::CitedBy { citation_type: None, context: None },
-            EdgeType::BelievedBy => EdgeProps::BelievedBy { confidence: None, basis: None, as_of_date: None },
-            EdgeType::ConsensusIn => EdgeProps::ConsensusIn { consensus_level: None, as_of_date: None },
+            EdgeType::ProposedBy => EdgeProps::ProposedBy {
+                date: None,
+                context: None,
+            },
+            EdgeType::AuthoredBy => EdgeProps::AuthoredBy {
+                position: None,
+                contribution: None,
+            },
+            EdgeType::CitedBy => EdgeProps::CitedBy {
+                citation_type: None,
+                context: None,
+            },
+            EdgeType::BelievedBy => EdgeProps::BelievedBy {
+                confidence: None,
+                basis: None,
+                as_of_date: None,
+            },
+            EdgeType::ConsensusIn => EdgeProps::ConsensusIn {
+                consensus_level: None,
+                as_of_date: None,
+            },
             EdgeType::DecomposesInto => EdgeProps::DecomposesInto { order: None },
             EdgeType::MotivatedBy => EdgeProps::MotivatedBy {},
             EdgeType::HasOption => EdgeProps::HasOption {},
@@ -223,13 +412,19 @@ impl EdgeProps {
             EdgeType::ConstrainedBy => EdgeProps::ConstrainedBy {},
             EdgeType::Blocks => EdgeProps::Blocks {},
             EdgeType::Informs => EdgeProps::Informs { relevance: None },
-            EdgeType::RelevantTo => EdgeProps::RelevantTo { relevance_score: None },
-            EdgeType::DependsOn => EdgeProps::DependsOn { dependency_type: None },
+            EdgeType::RelevantTo => EdgeProps::RelevantTo {
+                relevance_score: None,
+            },
+            EdgeType::DependsOn => EdgeProps::DependsOn {
+                dependency_type: None,
+            },
             EdgeType::AvailableOn => EdgeProps::AvailableOn {},
             EdgeType::ComposedOf => EdgeProps::ComposedOf { order: None },
             EdgeType::StepUses => EdgeProps::StepUses {},
             EdgeType::RiskAssessedBy => EdgeProps::RiskAssessedBy {},
-            EdgeType::Controls => EdgeProps::Controls { interaction_type: None },
+            EdgeType::Controls => EdgeProps::Controls {
+                interaction_type: None,
+            },
             EdgeType::CapturedIn => EdgeProps::CapturedIn { position: None },
             EdgeType::TraceEntry => EdgeProps::TraceEntry { order: None },
             EdgeType::Summarizes => EdgeProps::Summarizes {},
@@ -245,7 +440,10 @@ impl EdgeProps {
             EdgeType::ProducesNode => EdgeProps::ProducesNode {},
             EdgeType::GovernedByPolicy => EdgeProps::GovernedByPolicy {},
             EdgeType::BudgetFor => EdgeProps::BudgetFor {},
-            EdgeType::Custom(name) => EdgeProps::Custom { type_name: name, data: serde_json::Value::Object(Default::default()) },
+            EdgeType::Custom(name) => EdgeProps::Custom {
+                type_name: name,
+                data: serde_json::Value::Object(Default::default()),
+            },
         }
     }
 
@@ -308,48 +506,162 @@ impl EdgeProps {
         let get_bool = |key: &str| v.get(key).and_then(|x| x.as_bool());
 
         Ok(match edge_type {
-            EdgeType::ExtractedFrom => EdgeProps::ExtractedFrom { location: get_str("location"), method: get_str("method"), confidence: get_f64("confidence") },
-            EdgeType::PartOf => EdgeProps::PartOf { role: get_str("role") },
-            EdgeType::HasPart => EdgeProps::HasPart { role: get_str("role") },
-            EdgeType::Supports => EdgeProps::Supports { strength: get_f64("strength"), support_type: get_str("support_type") },
-            EdgeType::Refutes => EdgeProps::Refutes { strength: get_f64("strength"), refutation_type: get_str("refutation_type") },
-            EdgeType::Justifies => EdgeProps::Justifies { necessity: get_str("necessity") },
-            EdgeType::HasPremise => EdgeProps::HasPremise { order: get_i64("order"), role: get_str("role") },
-            EdgeType::Rebuts => EdgeProps::Rebuts { defeat_type: get_str("defeat_type"), rebuttal_type: get_str("rebuttal_type"), content: get_str("content"), strength: get_f64("strength") },
-            EdgeType::Assumes => EdgeProps::Assumes { necessity: get_str("necessity") },
-            EdgeType::Tests => EdgeProps::Tests { outcome: get_str("outcome"), test_type: get_str("test_type") },
-            EdgeType::UsesMethod => EdgeProps::UsesMethod { variant: get_str("variant") },
-            EdgeType::Addresses => EdgeProps::Addresses { completeness: get_str("completeness") },
-            EdgeType::Extends => EdgeProps::Extends { extension_type: get_str("extension_type") },
-            EdgeType::Supersedes => EdgeProps::Supersedes { supersession_type: get_str("supersession_type") },
-            EdgeType::Contradicts => EdgeProps::Contradicts { description: get_str("description"), contradiction_type: get_str("contradiction_type"), resolution_status: get_str("resolution_status"), proposed_resolution: get_str("proposed_resolution") },
-            EdgeType::AnomalousTo => EdgeProps::AnomalousTo { severity: get_str("severity") },
-            EdgeType::AnalogousTo => EdgeProps::AnalogousTo { mapping_type: get_str("mapping_type"), strength: get_f64("strength") },
-            EdgeType::TransfersTo => EdgeProps::TransfersTo { success: get_bool("success"), adaptations: get_str("adaptations") },
-            EdgeType::Evaluates => EdgeProps::Evaluates { evaluation_context: get_str("evaluation_context") },
-            EdgeType::Outperforms => EdgeProps::Outperforms { metric: get_str("metric"), margin: get_f64("margin"), conditions: get_str("conditions") },
-            EdgeType::FailsOn => EdgeProps::FailsOn { failure_mode: get_str("failure_mode"), severity: get_str("severity") },
-            EdgeType::HasChainStep => EdgeProps::HasChainStep { order: get_i64("order"), step_confidence: get_f64("step_confidence"), cumulative_confidence: get_f64("cumulative_confidence") },
-            EdgeType::PropagatesUncertaintyTo => EdgeProps::PropagatesUncertaintyTo { propagation_factor: get_f64("propagation_factor"), propagation_type: get_str("propagation_type") },
-            EdgeType::SensitiveTo => EdgeProps::SensitiveTo { elasticity: get_f64("elasticity"), direction: get_str("direction"), threshold: get_f64("threshold") },
-            EdgeType::RobustAcross => EdgeProps::RobustAcross { variation_type: get_str("variation_type"), range_tested: get_str("range_tested") },
-            EdgeType::ProposedBy => EdgeProps::ProposedBy { date: get_str("date"), context: get_str("context") },
-            EdgeType::AuthoredBy => EdgeProps::AuthoredBy { position: get_str("position"), contribution: get_str("contribution") },
-            EdgeType::CitedBy => EdgeProps::CitedBy { citation_type: get_str("citation_type"), context: get_str("context") },
-            EdgeType::BelievedBy => EdgeProps::BelievedBy { confidence: get_f64("confidence"), basis: get_str("basis"), as_of_date: get_str("as_of_date") },
-            EdgeType::ConsensusIn => EdgeProps::ConsensusIn { consensus_level: get_str("consensus_level"), as_of_date: get_str("as_of_date") },
-            EdgeType::DecomposesInto => EdgeProps::DecomposesInto { order: get_i64("order") },
-            EdgeType::DecidedOn => EdgeProps::DecidedOn { rationale: get_str("rationale") },
-            EdgeType::Informs => EdgeProps::Informs { relevance: get_f64("relevance") },
-            EdgeType::RelevantTo => EdgeProps::RelevantTo { relevance_score: get_f64("relevance_score") },
-            EdgeType::DependsOn => EdgeProps::DependsOn { dependency_type: get_str("dependency_type") },
-            EdgeType::ComposedOf => EdgeProps::ComposedOf { order: get_i64("order") },
-            EdgeType::Controls => EdgeProps::Controls { interaction_type: get_str("interaction_type") },
-            EdgeType::CapturedIn => EdgeProps::CapturedIn { position: get_i64("position") },
-            EdgeType::TraceEntry => EdgeProps::TraceEntry { order: get_i64("order") },
-            EdgeType::AssignedTo => EdgeProps::AssignedTo { assigned_at: get_f64("assigned_at") },
-            EdgeType::HasStep => EdgeProps::HasStep { order: get_i64("order") },
-            EdgeType::Custom(name) => EdgeProps::Custom { type_name: name.clone(), data: v },
+            EdgeType::ExtractedFrom => EdgeProps::ExtractedFrom {
+                location: get_str("location"),
+                method: get_str("method"),
+                confidence: get_f64("confidence"),
+            },
+            EdgeType::PartOf => EdgeProps::PartOf {
+                role: get_str("role"),
+            },
+            EdgeType::HasPart => EdgeProps::HasPart {
+                role: get_str("role"),
+            },
+            EdgeType::Supports => EdgeProps::Supports {
+                strength: get_f64("strength"),
+                support_type: get_str("support_type"),
+            },
+            EdgeType::Refutes => EdgeProps::Refutes {
+                strength: get_f64("strength"),
+                refutation_type: get_str("refutation_type"),
+            },
+            EdgeType::Justifies => EdgeProps::Justifies {
+                necessity: get_str("necessity"),
+            },
+            EdgeType::HasPremise => EdgeProps::HasPremise {
+                order: get_i64("order"),
+                role: get_str("role"),
+            },
+            EdgeType::Rebuts => EdgeProps::Rebuts {
+                defeat_type: get_str("defeat_type"),
+                rebuttal_type: get_str("rebuttal_type"),
+                content: get_str("content"),
+                strength: get_f64("strength"),
+            },
+            EdgeType::Assumes => EdgeProps::Assumes {
+                necessity: get_str("necessity"),
+            },
+            EdgeType::Tests => EdgeProps::Tests {
+                outcome: get_str("outcome"),
+                test_type: get_str("test_type"),
+            },
+            EdgeType::UsesMethod => EdgeProps::UsesMethod {
+                variant: get_str("variant"),
+            },
+            EdgeType::Addresses => EdgeProps::Addresses {
+                completeness: get_str("completeness"),
+            },
+            EdgeType::Extends => EdgeProps::Extends {
+                extension_type: get_str("extension_type"),
+            },
+            EdgeType::Supersedes => EdgeProps::Supersedes {
+                supersession_type: get_str("supersession_type"),
+            },
+            EdgeType::Contradicts => EdgeProps::Contradicts {
+                description: get_str("description"),
+                contradiction_type: get_str("contradiction_type"),
+                resolution_status: get_str("resolution_status"),
+                proposed_resolution: get_str("proposed_resolution"),
+            },
+            EdgeType::AnomalousTo => EdgeProps::AnomalousTo {
+                severity: get_str("severity"),
+            },
+            EdgeType::AnalogousTo => EdgeProps::AnalogousTo {
+                mapping_type: get_str("mapping_type"),
+                strength: get_f64("strength"),
+            },
+            EdgeType::TransfersTo => EdgeProps::TransfersTo {
+                success: get_bool("success"),
+                adaptations: get_str("adaptations"),
+            },
+            EdgeType::Evaluates => EdgeProps::Evaluates {
+                evaluation_context: get_str("evaluation_context"),
+            },
+            EdgeType::Outperforms => EdgeProps::Outperforms {
+                metric: get_str("metric"),
+                margin: get_f64("margin"),
+                conditions: get_str("conditions"),
+            },
+            EdgeType::FailsOn => EdgeProps::FailsOn {
+                failure_mode: get_str("failure_mode"),
+                severity: get_str("severity"),
+            },
+            EdgeType::HasChainStep => EdgeProps::HasChainStep {
+                order: get_i64("order"),
+                step_confidence: get_f64("step_confidence"),
+                cumulative_confidence: get_f64("cumulative_confidence"),
+            },
+            EdgeType::PropagatesUncertaintyTo => EdgeProps::PropagatesUncertaintyTo {
+                propagation_factor: get_f64("propagation_factor"),
+                propagation_type: get_str("propagation_type"),
+            },
+            EdgeType::SensitiveTo => EdgeProps::SensitiveTo {
+                elasticity: get_f64("elasticity"),
+                direction: get_str("direction"),
+                threshold: get_f64("threshold"),
+            },
+            EdgeType::RobustAcross => EdgeProps::RobustAcross {
+                variation_type: get_str("variation_type"),
+                range_tested: get_str("range_tested"),
+            },
+            EdgeType::ProposedBy => EdgeProps::ProposedBy {
+                date: get_str("date"),
+                context: get_str("context"),
+            },
+            EdgeType::AuthoredBy => EdgeProps::AuthoredBy {
+                position: get_str("position"),
+                contribution: get_str("contribution"),
+            },
+            EdgeType::CitedBy => EdgeProps::CitedBy {
+                citation_type: get_str("citation_type"),
+                context: get_str("context"),
+            },
+            EdgeType::BelievedBy => EdgeProps::BelievedBy {
+                confidence: get_f64("confidence"),
+                basis: get_str("basis"),
+                as_of_date: get_str("as_of_date"),
+            },
+            EdgeType::ConsensusIn => EdgeProps::ConsensusIn {
+                consensus_level: get_str("consensus_level"),
+                as_of_date: get_str("as_of_date"),
+            },
+            EdgeType::DecomposesInto => EdgeProps::DecomposesInto {
+                order: get_i64("order"),
+            },
+            EdgeType::DecidedOn => EdgeProps::DecidedOn {
+                rationale: get_str("rationale"),
+            },
+            EdgeType::Informs => EdgeProps::Informs {
+                relevance: get_f64("relevance"),
+            },
+            EdgeType::RelevantTo => EdgeProps::RelevantTo {
+                relevance_score: get_f64("relevance_score"),
+            },
+            EdgeType::DependsOn => EdgeProps::DependsOn {
+                dependency_type: get_str("dependency_type"),
+            },
+            EdgeType::ComposedOf => EdgeProps::ComposedOf {
+                order: get_i64("order"),
+            },
+            EdgeType::Controls => EdgeProps::Controls {
+                interaction_type: get_str("interaction_type"),
+            },
+            EdgeType::CapturedIn => EdgeProps::CapturedIn {
+                position: get_i64("position"),
+            },
+            EdgeType::TraceEntry => EdgeProps::TraceEntry {
+                order: get_i64("order"),
+            },
+            EdgeType::AssignedTo => EdgeProps::AssignedTo {
+                assigned_at: get_f64("assigned_at"),
+            },
+            EdgeType::HasStep => EdgeProps::HasStep {
+                order: get_i64("order"),
+            },
+            EdgeType::Custom(name) => EdgeProps::Custom {
+                type_name: name.clone(),
+                data: v,
+            },
             // Already handled above
             _ => unreachable!(),
         })

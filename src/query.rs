@@ -44,14 +44,20 @@ pub struct Pagination {
 
 impl Default for Pagination {
     fn default() -> Self {
-        Pagination { limit: 100, offset: 0 }
+        Pagination {
+            limit: 100,
+            offset: 0,
+        }
     }
 }
 
 impl Pagination {
     /// Create pagination requesting the first `n` results.
     pub fn first(n: u32) -> Self {
-        Pagination { limit: n, offset: 0 }
+        Pagination {
+            limit: n,
+            offset: 0,
+        }
     }
 }
 
@@ -74,7 +80,11 @@ pub struct TombstoneResult {
 
 impl fmt::Display for TombstoneResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TombstoneResult {{ edges_tombstoned: {} }}", self.edges_tombstoned)
+        write!(
+            f,
+            "TombstoneResult {{ edges_tombstoned: {} }}",
+            self.edges_tombstoned
+        )
     }
 }
 
@@ -198,7 +208,10 @@ impl NodeFilter {
     }
 
     pub fn prop_condition(mut self, field: impl Into<String>, op: PropOp) -> Self {
-        self.prop_conditions.push(PropCondition { field: field.into(), op });
+        self.prop_conditions.push(PropCondition {
+            field: field.into(),
+            op,
+        });
         self
     }
 
@@ -265,7 +278,11 @@ pub struct ImportResult {
 
 impl fmt::Display for ImportResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ImportResult {{ relations_imported: {} }}", self.relations_imported)
+        write!(
+            f,
+            "ImportResult {{ relations_imported: {} }}",
+            self.relations_imported
+        )
     }
 }
 
@@ -293,8 +310,16 @@ impl fmt::Display for MergeResult {
 pub enum GraphOp {
     AddNode(Box<CreateNode>),
     AddEdge(Box<CreateEdge>),
-    Tombstone { uid: Uid, reason: String, by: String },
-    TombstoneEdge { uid: Uid, reason: String, by: String },
+    Tombstone {
+        uid: Uid,
+        reason: String,
+        by: String,
+    },
+    TombstoneEdge {
+        uid: Uid,
+        reason: String,
+        by: String,
+    },
 }
 
 /// Result of a batch operation.
@@ -409,8 +434,10 @@ impl fmt::Display for TypedImportResult {
         write!(
             f,
             "TypedImportResult {{ nodes: +{}/{} skipped, edges: +{}/{} skipped, embeddings: {} }}",
-            self.nodes_imported, self.nodes_skipped,
-            self.edges_imported, self.edges_skipped,
+            self.nodes_imported,
+            self.nodes_skipped,
+            self.edges_imported,
+            self.edges_skipped,
             self.embeddings_imported
         )
     }

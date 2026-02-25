@@ -106,10 +106,9 @@ impl NodeType {
     pub fn layer(&self) -> Layer {
         match self {
             // Reality
-            NodeType::Source
-            | NodeType::Snippet
-            | NodeType::Entity
-            | NodeType::Observation => Layer::Reality,
+            NodeType::Source | NodeType::Snippet | NodeType::Entity | NodeType::Observation => {
+                Layer::Reality
+            }
 
             // Epistemic
             NodeType::Claim

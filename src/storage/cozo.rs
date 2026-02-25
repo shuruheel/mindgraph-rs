@@ -29,8 +29,7 @@ impl CozoStorage {
 
     /// Create an in-memory database (for testing).
     pub fn open_in_memory() -> Result<Self> {
-        let db = DbInstance::new("mem", "", "")
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        let db = DbInstance::new("mem", "", "").map_err(|e| Error::Storage(e.to_string()))?;
         let storage = CozoStorage { db };
         storage.initialize()?;
         Ok(storage)
@@ -38,11 +37,9 @@ impl CozoStorage {
 
     fn initialize(&self) -> Result<()> {
         for migration in SCHEMA_MIGRATIONS {
-            let result = self.db.run_script(
-                migration,
-                BTreeMap::new(),
-                ScriptMutability::Mutable,
-            );
+            let result = self
+                .db
+                .run_script(migration, BTreeMap::new(), ScriptMutability::Mutable);
             if let Err(e) = result {
                 let err_str = e.to_string();
                 if !err_str.contains("already exists")
@@ -199,7 +196,11 @@ impl CozoStorage {
         params.insert("node_type".into(), str_val(node_type.as_str()));
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     /// Query edges from a node, optionally filtered by edge type.
@@ -234,7 +235,11 @@ impl CozoStorage {
         };
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_edge(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_edge(row))
+            .collect()
     }
 
     /// Query edges to a node.
@@ -269,7 +274,11 @@ impl CozoStorage {
         };
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_edge(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_edge(row))
+            .collect()
     }
 
     /// Query live nodes by type where a JSON props field equals a given value.
@@ -300,7 +309,11 @@ impl CozoStorage {
         params.insert("prop_value".into(), str_val(prop_value));
 
         let result = self.run_query(&script, params)?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     /// Query live nodes by type where a JSON props field is one of several values.
@@ -340,7 +353,11 @@ impl CozoStorage {
         }
 
         let result = self.run_query(&script, params)?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     /// Query live nodes by type where confidence is below a threshold.
@@ -367,7 +384,11 @@ impl CozoStorage {
         params.insert("threshold".into(), DataValue::from(threshold));
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     /// Insert a version record for a node.
@@ -449,7 +470,10 @@ impl CozoStorage {
         params.insert("node_uid".into(), str_val(record.node_uid.as_str()));
         params.insert("source_uid".into(), str_val(record.source_uid.as_str()));
         params.insert("method".into(), str_val(record.extraction_method.as_str()));
-        params.insert("confidence".into(), DataValue::from(record.extraction_confidence));
+        params.insert(
+            "confidence".into(),
+            DataValue::from(record.extraction_confidence),
+        );
         params.insert("location".into(), str_val(&record.source_location));
         params.insert("text_span".into(), str_val(&record.text_span));
         params.insert("extracted_by".into(), str_val(&record.extracted_by));
@@ -524,7 +548,11 @@ impl CozoStorage {
         params.insert("layer".into(), str_val(layer.as_str()));
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     /// Count live nodes of a given type.
@@ -628,7 +656,8 @@ impl CozoStorage {
                         *edge{from_uid, to_uid, edge_type, weight, tombstone_at},
                         tombstone_at == 0.0,
                         weight >= $w_threshold
-                "#.to_string(),
+                "#
+                .to_string(),
                 p,
             )
         } else {
@@ -637,7 +666,8 @@ impl CozoStorage {
                     ?[from_uid, to_uid, edge_type] :=
                         *edge{from_uid, to_uid, edge_type, tombstone_at},
                         tombstone_at == 0.0
-                "#.to_string(),
+                "#
+                .to_string(),
                 BTreeMap::new(),
             )
         };
@@ -650,7 +680,10 @@ impl CozoStorage {
             let from = extract_string(&row[0])?;
             let to = extract_string(&row[1])?;
             let et = extract_string(&row[2])?;
-            outgoing.entry(from.clone()).or_default().push((to.clone(), et.clone()));
+            outgoing
+                .entry(from.clone())
+                .or_default()
+                .push((to.clone(), et.clone()));
             incoming.entry(to).or_default().push((from, et));
         }
 
@@ -714,7 +747,12 @@ impl CozoStorage {
                 }
 
                 visited.insert(neighbor.clone());
-                reached.push((neighbor.clone(), et.clone(), depth + 1, Some(current.clone())));
+                reached.push((
+                    neighbor.clone(),
+                    et.clone(),
+                    depth + 1,
+                    Some(current.clone()),
+                ));
                 queue.push_back((neighbor.clone(), depth + 1, Some(current.clone())));
             }
         }
@@ -792,7 +830,8 @@ impl CozoStorage {
         weight_threshold: Option<f64>,
     ) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
         // Get reachable node UIDs
-        let steps = self.traverse_reachable(start, direction, edge_types, max_depth, weight_threshold)?;
+        let steps =
+            self.traverse_reachable(start, direction, edge_types, max_depth, weight_threshold)?;
         let mut node_uids: Vec<Uid> = steps.iter().map(|s| s.node_uid.clone()).collect();
         node_uids.push(start.clone());
 
@@ -851,8 +890,15 @@ impl CozoStorage {
 
         let result = self.run_query(&script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
-        let nodes: Result<Vec<GraphNode>> = result.rows[..take].iter().map(|row| self.row_to_node(row)).collect();
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
+        let nodes: Result<Vec<GraphNode>> = result.rows[..take]
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect();
         Ok((nodes?, has_more))
     }
 
@@ -903,8 +949,15 @@ impl CozoStorage {
 
         let result = self.run_query(&script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
-        let edges: Result<Vec<GraphEdge>> = result.rows[..take].iter().map(|row| self.row_to_edge(row)).collect();
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
+        let edges: Result<Vec<GraphEdge>> = result.rows[..take]
+            .iter()
+            .map(|row| self.row_to_edge(row))
+            .collect();
         Ok((edges?, has_more))
     }
 
@@ -941,8 +994,15 @@ impl CozoStorage {
 
         let result = self.run_query(&script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
-        let nodes: Result<Vec<GraphNode>> = result.rows[..take].iter().map(|row| self.row_to_node(row)).collect();
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
+        let nodes: Result<Vec<GraphNode>> = result.rows[..take]
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect();
         Ok((nodes?, has_more))
     }
 
@@ -981,8 +1041,15 @@ impl CozoStorage {
 
         let result = self.run_query(&script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
-        let nodes: Result<Vec<GraphNode>> = result.rows[..take].iter().map(|row| self.row_to_node(row)).collect();
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
+        let nodes: Result<Vec<GraphNode>> = result.rows[..take]
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect();
         Ok((nodes?, has_more))
     }
 
@@ -1016,9 +1083,16 @@ impl CozoStorage {
 
         let result = self.run_query(&script, BTreeMap::new())?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
         // Skip the priority_rank column (index 0), node data starts at index 1
-        let nodes: Result<Vec<GraphNode>> = result.rows[..take].iter().map(|row| self.row_to_node(&row[1..])).collect();
+        let nodes: Result<Vec<GraphNode>> = result.rows[..take]
+            .iter()
+            .map(|row| self.row_to_node(&row[1..]))
+            .collect();
         Ok((nodes?, has_more))
     }
 
@@ -1069,8 +1143,15 @@ impl CozoStorage {
 
         let result = self.run_query(&script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
-        let edges: Result<Vec<GraphEdge>> = result.rows[..take].iter().map(|row| self.row_to_edge(row)).collect();
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
+        let edges: Result<Vec<GraphEdge>> = result.rows[..take]
+            .iter()
+            .map(|row| self.row_to_edge(row))
+            .collect();
         Ok((edges?, has_more))
     }
 
@@ -1086,21 +1167,54 @@ impl CozoStorage {
                 let props_json = node.props.to_json();
                 let prefix = format!("n{}", i);
                 params.insert(format!("{}_uid", prefix), str_val(node.uid.as_str()));
-                params.insert(format!("{}_node_type", prefix), str_val(node.node_type.as_str()));
+                params.insert(
+                    format!("{}_node_type", prefix),
+                    str_val(node.node_type.as_str()),
+                );
                 params.insert(format!("{}_layer", prefix), str_val(node.layer.as_str()));
                 params.insert(format!("{}_label", prefix), str_val(&node.label));
                 params.insert(format!("{}_summary", prefix), str_val(&node.summary));
-                params.insert(format!("{}_created_at", prefix), DataValue::from(node.created_at));
-                params.insert(format!("{}_updated_at", prefix), DataValue::from(node.updated_at));
+                params.insert(
+                    format!("{}_created_at", prefix),
+                    DataValue::from(node.created_at),
+                );
+                params.insert(
+                    format!("{}_updated_at", prefix),
+                    DataValue::from(node.updated_at),
+                );
                 params.insert(format!("{}_version", prefix), DataValue::from(node.version));
-                params.insert(format!("{}_confidence", prefix), DataValue::from(node.confidence.value()));
-                params.insert(format!("{}_salience", prefix), DataValue::from(node.salience.value()));
-                params.insert(format!("{}_privacy_level", prefix), str_val(node.privacy_level.as_str()));
-                params.insert(format!("{}_embedding_ref", prefix), str_val(node.embedding_ref.as_deref().unwrap_or("")));
-                params.insert(format!("{}_tombstone_at", prefix), DataValue::from(node.tombstone_at.unwrap_or(0.0)));
-                params.insert(format!("{}_tombstone_reason", prefix), str_val(node.tombstone_reason.as_deref().unwrap_or("")));
-                params.insert(format!("{}_tombstone_by", prefix), str_val(node.tombstone_by.as_deref().unwrap_or("")));
-                params.insert(format!("{}_props", prefix), DataValue::Json(cozo::JsonData(props_json)));
+                params.insert(
+                    format!("{}_confidence", prefix),
+                    DataValue::from(node.confidence.value()),
+                );
+                params.insert(
+                    format!("{}_salience", prefix),
+                    DataValue::from(node.salience.value()),
+                );
+                params.insert(
+                    format!("{}_privacy_level", prefix),
+                    str_val(node.privacy_level.as_str()),
+                );
+                params.insert(
+                    format!("{}_embedding_ref", prefix),
+                    str_val(node.embedding_ref.as_deref().unwrap_or("")),
+                );
+                params.insert(
+                    format!("{}_tombstone_at", prefix),
+                    DataValue::from(node.tombstone_at.unwrap_or(0.0)),
+                );
+                params.insert(
+                    format!("{}_tombstone_reason", prefix),
+                    str_val(node.tombstone_reason.as_deref().unwrap_or("")),
+                );
+                params.insert(
+                    format!("{}_tombstone_by", prefix),
+                    str_val(node.tombstone_by.as_deref().unwrap_or("")),
+                );
+                params.insert(
+                    format!("{}_props", prefix),
+                    DataValue::Json(cozo::JsonData(props_json)),
+                );
                 rows.push(format!(
                     "[${p}_uid, ${p}_node_type, ${p}_layer, ${p}_label, ${p}_summary, ${p}_created_at, ${p}_updated_at, ${p}_version, ${p}_confidence, ${p}_salience, ${p}_privacy_level, ${p}_embedding_ref, ${p}_tombstone_at, ${p}_tombstone_reason, ${p}_tombstone_by, ${p}_props]",
                     p = prefix
@@ -1135,17 +1249,38 @@ impl CozoStorage {
                 let props_json = edge.props.to_json();
                 let prefix = format!("e{}", i);
                 params.insert(format!("{}_uid", prefix), str_val(edge.uid.as_str()));
-                params.insert(format!("{}_from_uid", prefix), str_val(edge.from_uid.as_str()));
+                params.insert(
+                    format!("{}_from_uid", prefix),
+                    str_val(edge.from_uid.as_str()),
+                );
                 params.insert(format!("{}_to_uid", prefix), str_val(edge.to_uid.as_str()));
-                params.insert(format!("{}_edge_type", prefix), str_val(edge.edge_type.as_str()));
+                params.insert(
+                    format!("{}_edge_type", prefix),
+                    str_val(edge.edge_type.as_str()),
+                );
                 params.insert(format!("{}_layer", prefix), str_val(edge.layer.as_str()));
-                params.insert(format!("{}_created_at", prefix), DataValue::from(edge.created_at));
-                params.insert(format!("{}_updated_at", prefix), DataValue::from(edge.updated_at));
+                params.insert(
+                    format!("{}_created_at", prefix),
+                    DataValue::from(edge.created_at),
+                );
+                params.insert(
+                    format!("{}_updated_at", prefix),
+                    DataValue::from(edge.updated_at),
+                );
                 params.insert(format!("{}_version", prefix), DataValue::from(edge.version));
-                params.insert(format!("{}_confidence", prefix), DataValue::from(edge.confidence.value()));
+                params.insert(
+                    format!("{}_confidence", prefix),
+                    DataValue::from(edge.confidence.value()),
+                );
                 params.insert(format!("{}_weight", prefix), DataValue::from(edge.weight));
-                params.insert(format!("{}_tombstone_at", prefix), DataValue::from(edge.tombstone_at.unwrap_or(0.0)));
-                params.insert(format!("{}_props", prefix), DataValue::Json(cozo::JsonData(props_json)));
+                params.insert(
+                    format!("{}_tombstone_at", prefix),
+                    DataValue::from(edge.tombstone_at.unwrap_or(0.0)),
+                );
+                params.insert(
+                    format!("{}_props", prefix),
+                    DataValue::Json(cozo::JsonData(props_json)),
+                );
                 rows.push(format!(
                     "[${p}_uid, ${p}_from_uid, ${p}_to_uid, ${p}_edge_type, ${p}_layer, ${p}_created_at, ${p}_updated_at, ${p}_version, ${p}_confidence, ${p}_weight, ${p}_tombstone_at, ${p}_props]",
                     p = prefix
@@ -1297,7 +1432,8 @@ impl CozoStorage {
                 summary_matches[uid, score] :=
                     ~node:summary_fts{ uid, summary | query: $q, k: $k, bind_score: score },
                     score >= $min_score
-                "#.to_string()
+                "#
+            .to_string()
         } else {
             // Empty rule that never matches
             "summary_matches[uid, score] := uid = '', score = 0.0, false".to_string()
@@ -1435,24 +1571,37 @@ impl CozoStorage {
                 }
                 crate::query::PropOp::Contains(val) => {
                     params.insert(var_name.clone(), str_val(val));
-                    conditions.push(format!("str_includes(get(props, '{}', ''), ${})", cond.field, var_name));
+                    conditions.push(format!(
+                        "str_includes(get(props, '{}', ''), ${})",
+                        cond.field, var_name
+                    ));
                 }
                 crate::query::PropOp::In(vals) => {
-                    let or_parts: Vec<String> = vals.iter().enumerate().map(|(j, v)| {
-                        let pname = format!("{}_v{}", var_name, j);
-                        params.insert(pname.clone(), str_val(v));
-                        format!("pc_{}_val == ${}", i, pname)
-                    }).collect();
+                    let or_parts: Vec<String> = vals
+                        .iter()
+                        .enumerate()
+                        .map(|(j, v)| {
+                            let pname = format!("{}_v{}", var_name, j);
+                            params.insert(pname.clone(), str_val(v));
+                            format!("pc_{}_val == ${}", i, pname)
+                        })
+                        .collect();
                     conditions.push(format!("pc_{}_val = get(props, '{}', '')", i, cond.field));
                     conditions.push(format!("({})", or_parts.join(" or ")));
                 }
                 crate::query::PropOp::GreaterThan(val) => {
                     params.insert(var_name.clone(), DataValue::from(*val));
-                    conditions.push(format!("to_float(get(props, '{}', '0')) > ${}", cond.field, var_name));
+                    conditions.push(format!(
+                        "to_float(get(props, '{}', '0')) > ${}",
+                        cond.field, var_name
+                    ));
                 }
                 crate::query::PropOp::LessThan(val) => {
                     params.insert(var_name.clone(), DataValue::from(*val));
-                    conditions.push(format!("to_float(get(props, '{}', '0')) < ${}", cond.field, var_name));
+                    conditions.push(format!(
+                        "to_float(get(props, '{}', '0')) < ${}",
+                        cond.field, var_name
+                    ));
                 }
             }
         }
@@ -1460,7 +1609,10 @@ impl CozoStorage {
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
-            format!(",\n                    {}", conditions.join(",\n                    "))
+            format!(
+                ",\n                    {}",
+                conditions.join(",\n                    ")
+            )
         };
 
         let script = format!(
@@ -1481,7 +1633,11 @@ impl CozoStorage {
 
         let result = self.run_query(&script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let take = if has_more { limit as usize } else { result.rows.len() };
+        let take = if has_more {
+            limit as usize
+        } else {
+            result.rows.len()
+        };
         let nodes: Result<Vec<GraphNode>> = result.rows[..take]
             .iter()
             .map(|row| self.row_to_node(row))
@@ -1492,10 +1648,7 @@ impl CozoStorage {
     // ---- Purge Operations ----
 
     /// Hard-delete tombstoned nodes and their associated data.
-    pub fn purge_tombstoned(
-        &self,
-        cutoff: Option<f64>,
-    ) -> Result<crate::query::PurgeResult> {
+    pub fn purge_tombstoned(&self, cutoff: Option<f64>) -> Result<crate::query::PurgeResult> {
         // 1. Find tombstoned node UIDs
         let node_script = if let Some(cutoff_ts) = cutoff {
             let mut params = BTreeMap::new();
@@ -1625,13 +1778,21 @@ impl CozoStorage {
 
     /// Export all relations as JSON.
     pub fn export_all(&self) -> Result<BTreeMap<String, serde_json::Value>> {
-        let relation_names = ["node", "edge", "node_version", "edge_version", "provenance", "alias"];
+        let relation_names = [
+            "node",
+            "edge",
+            "node_version",
+            "edge_version",
+            "provenance",
+            "alias",
+        ];
         let mut result = BTreeMap::new();
 
         for name in &relation_names {
-            let export = self.db.export_relations(
-                [name].into_iter(),
-            ).map_err(|e| Error::Storage(e.to_string()))?;
+            let export = self
+                .db
+                .export_relations([name].into_iter())
+                .map_err(|e| Error::Storage(e.to_string()))?;
 
             if let Some(named_rows) = export.get(*name) {
                 let rows_json = named_rows_to_json(named_rows);
@@ -1774,13 +1935,19 @@ impl CozoStorage {
         // Total and live nodes
         let r = self.run_query("?[count(uid)] := *node{uid}", BTreeMap::new())?;
         let total_nodes = extract_int(&r.rows[0][0])? as u64;
-        let r = self.run_query("?[count(uid)] := *node{uid, tombstone_at}, tombstone_at == 0.0", BTreeMap::new())?;
+        let r = self.run_query(
+            "?[count(uid)] := *node{uid, tombstone_at}, tombstone_at == 0.0",
+            BTreeMap::new(),
+        )?;
         let live_nodes = extract_int(&r.rows[0][0])? as u64;
 
         // Total and live edges
         let r = self.run_query("?[count(uid)] := *edge{uid}", BTreeMap::new())?;
         let total_edges = extract_int(&r.rows[0][0])? as u64;
-        let r = self.run_query("?[count(uid)] := *edge{uid, tombstone_at}, tombstone_at == 0.0", BTreeMap::new())?;
+        let r = self.run_query(
+            "?[count(uid)] := *edge{uid, tombstone_at}, tombstone_at == 0.0",
+            BTreeMap::new(),
+        )?;
         let live_edges = extract_int(&r.rows[0][0])? as u64;
 
         // Nodes by type (live only)
@@ -1885,20 +2052,21 @@ impl CozoStorage {
     pub fn get_embedding_dimension(&self) -> Result<Option<usize>> {
         let mut params = BTreeMap::new();
         params.insert("key".into(), str_val("embedding_dimension"));
-        let result = self.run_query(
-            r#"?[value] := *mg_meta{key, value}, key == $key"#,
-            params,
-        )?;
+        let result = self.run_query(r#"?[value] := *mg_meta{key, value}, key == $key"#, params)?;
         if result.rows.is_empty() {
             return Ok(None);
         }
         let dim_str = extract_string(&result.rows[0][0])?;
-        dim_str.parse::<usize>().map(Some).map_err(|e| Error::Storage(e.to_string()))
+        dim_str
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|e| Error::Storage(e.to_string()))
     }
 
     /// Upsert an embedding vector for a node.
     pub fn upsert_embedding(&self, uid: &Uid, embedding: &[f32]) -> Result<()> {
-        let vec_str: String = embedding.iter()
+        let vec_str: String = embedding
+            .iter()
             .map(|v| format!("{}", v))
             .collect::<Vec<_>>()
             .join(", ");
@@ -1929,15 +2097,16 @@ impl CozoStorage {
                 }
                 match &r.rows[0][0] {
                     DataValue::List(items) => {
-                        let vec: Vec<f32> = items.iter().map(|v| {
-                            match v {
+                        let vec: Vec<f32> = items
+                            .iter()
+                            .map(|v| match v {
                                 DataValue::Num(n) => match n {
                                     cozo::Num::Float(f) => *f as f32,
                                     cozo::Num::Int(i) => *i as f32,
                                 },
                                 _ => 0.0,
-                            }
-                        }).collect();
+                            })
+                            .collect();
                         Ok(Some(vec))
                     }
                     DataValue::Vec(v) => {
@@ -1952,7 +2121,10 @@ impl CozoStorage {
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("not found") || msg.contains("does not exist") || msg.contains("Cannot find") {
+                if msg.contains("not found")
+                    || msg.contains("does not exist")
+                    || msg.contains("Cannot find")
+                {
                     Ok(None)
                 } else {
                     Err(e)
@@ -1974,8 +2146,14 @@ impl CozoStorage {
     }
 
     /// Semantic search using HNSW index.
-    pub fn semantic_search_raw(&self, query_vec: &[f32], k: usize, ef: usize) -> Result<Vec<(Uid, f64)>> {
-        let vec_str: String = query_vec.iter()
+    pub fn semantic_search_raw(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<(Uid, f64)>> {
+        let vec_str: String = query_vec
+            .iter()
             .map(|v| format!("{}", v))
             .collect::<Vec<_>>()
             .join(", ");
@@ -1997,18 +2175,20 @@ impl CozoStorage {
 
     /// Count embeddings (returns 0 if relation doesn't exist).
     pub fn count_embeddings(&self) -> Result<u64> {
-        let result = self.run_query(
-            "?[count(uid)] := *node_embedding{uid}",
-            BTreeMap::new(),
-        );
+        let result = self.run_query("?[count(uid)] := *node_embedding{uid}", BTreeMap::new());
         match result {
             Ok(r) => {
-                if r.rows.is_empty() { return Ok(0); }
+                if r.rows.is_empty() {
+                    return Ok(0);
+                }
                 Ok(extract_int(&r.rows[0][0])? as u64)
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("not found") || msg.contains("does not exist") || msg.contains("Cannot find") {
+                if msg.contains("not found")
+                    || msg.contains("does not exist")
+                    || msg.contains("Cannot find")
+                {
                     Ok(0)
                 } else {
                     Err(e)
@@ -2021,7 +2201,11 @@ impl CozoStorage {
 
     /// Apply exponential salience decay to all live nodes.
     /// Returns (uid, old_salience, new_salience) for changed nodes.
-    pub fn apply_salience_decay(&self, half_life_secs: f64, current_time: f64) -> Result<Vec<(String, f64, f64)>> {
+    pub fn apply_salience_decay(
+        &self,
+        half_life_secs: f64,
+        current_time: f64,
+    ) -> Result<Vec<(String, f64, f64)>> {
         // Step 1: Read all live nodes with their salience and updated_at
         let script = r#"
             ?[uid, salience, updated_at] :=
@@ -2142,7 +2326,11 @@ impl CozoStorage {
                 tombstone_at == 0.0
         "#;
         let result = self.run_query(script, BTreeMap::new())?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     /// Export all live edges.
@@ -2155,7 +2343,11 @@ impl CozoStorage {
                 tombstone_at == 0.0
         "#;
         let result = self.run_query(script, BTreeMap::new())?;
-        result.rows.iter().map(|row| self.row_to_edge(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_edge(row))
+            .collect()
     }
 
     /// Export all embeddings. Gracefully handles missing `node_embedding` relation.
@@ -2170,15 +2362,16 @@ impl CozoStorage {
                 for row in &r.rows {
                     let uid = Uid::from(extract_string(&row[0])?.as_str());
                     let vec = match &row[1] {
-                        DataValue::List(items) => {
-                            items.iter().map(|v| match v {
+                        DataValue::List(items) => items
+                            .iter()
+                            .map(|v| match v {
                                 DataValue::Num(n) => match n {
                                     cozo::Num::Float(f) => *f as f32,
                                     cozo::Num::Int(i) => *i as f32,
                                 },
                                 _ => 0.0,
-                            }).collect()
-                        }
+                            })
+                            .collect(),
                         DataValue::Vec(v) => {
                             use cozo::Vector;
                             match v {
@@ -2194,7 +2387,10 @@ impl CozoStorage {
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("not found") || msg.contains("does not exist") || msg.contains("Cannot find") {
+                if msg.contains("not found")
+                    || msg.contains("does not exist")
+                    || msg.contains("Cannot find")
+                {
                     Ok(Vec::new())
                 } else {
                     Err(e)
@@ -2263,7 +2459,10 @@ impl CozoStorage {
         p.insert("created_at".into(), DataValue::from(node.created_at));
         p.insert("updated_at".into(), DataValue::from(node.updated_at));
         p.insert("version".into(), DataValue::from(node.version));
-        p.insert("confidence".into(), DataValue::from(node.confidence.value()));
+        p.insert(
+            "confidence".into(),
+            DataValue::from(node.confidence.value()),
+        );
         p.insert("salience".into(), DataValue::from(node.salience.value()));
         p.insert("privacy_level".into(), str_val(node.privacy_level.as_str()));
         p.insert(
@@ -2300,7 +2499,10 @@ impl CozoStorage {
         p.insert("created_at".into(), DataValue::from(edge.created_at));
         p.insert("updated_at".into(), DataValue::from(edge.updated_at));
         p.insert("version".into(), DataValue::from(edge.version));
-        p.insert("confidence".into(), DataValue::from(edge.confidence.value()));
+        p.insert(
+            "confidence".into(),
+            DataValue::from(edge.confidence.value()),
+        );
         p.insert("weight".into(), DataValue::from(edge.weight));
         p.insert(
             "tombstone_at".into(),
@@ -2332,17 +2534,29 @@ impl CozoStorage {
         let privacy_str = extract_string(&row[10])?;
         let privacy_level = parse_privacy_level(&privacy_str)?;
         let emb_str = extract_string(&row[11])?;
-        let embedding_ref = if emb_str.is_empty() { None } else { Some(emb_str) };
+        let embedding_ref = if emb_str.is_empty() {
+            None
+        } else {
+            Some(emb_str)
+        };
         let ts_at = extract_float(&row[12])?;
         let tombstone_at = if ts_at == 0.0 { None } else { Some(ts_at) };
         let ts_reason = extract_string(&row[13])?;
-        let tombstone_reason = if ts_reason.is_empty() { None } else { Some(ts_reason) };
+        let tombstone_reason = if ts_reason.is_empty() {
+            None
+        } else {
+            Some(ts_reason)
+        };
         let ts_by = extract_string(&row[14])?;
         let tombstone_by = if ts_by.is_empty() { None } else { Some(ts_by) };
         let props_json = extract_json(&row[15])?;
         let props = NodeProps::from_json(&node_type, &props_json)?;
         // For custom types, use the layer from the deserialized props
-        let layer = if node_type.is_custom() { props.layer() } else { layer };
+        let layer = if node_type.is_custom() {
+            props.layer()
+        } else {
+            layer
+        };
 
         Ok(GraphNode {
             uid,
@@ -2444,7 +2658,11 @@ impl CozoStorage {
         }
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_edge(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_edge(row))
+            .collect()
     }
 
     // ---- v0.5: list_nodes (paginated) ----
@@ -2474,8 +2692,15 @@ impl CozoStorage {
 
         let result = self.run_query(script, params)?;
         let has_more = result.rows.len() > limit as usize;
-        let rows = if has_more { &result.rows[..limit as usize] } else { &result.rows };
-        let nodes: Vec<GraphNode> = rows.iter().map(|row| self.row_to_node(row)).collect::<Result<_>>()?;
+        let rows = if has_more {
+            &result.rows[..limit as usize]
+        } else {
+            &result.rows
+        };
+        let nodes: Vec<GraphNode> = rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect::<Result<_>>()?;
         Ok((nodes, has_more))
     }
 
@@ -2501,7 +2726,11 @@ impl CozoStorage {
         params.insert("agent_id".into(), str_val(agent_id));
 
         let result = self.run_query(script, params)?;
-        result.rows.iter().map(|row| self.row_to_node(row)).collect()
+        result
+            .rows
+            .iter()
+            .map(|row| self.row_to_node(row))
+            .collect()
     }
 
     // ---- v0.5: clear ----
@@ -2790,9 +3019,7 @@ fn named_rows_to_json(named_rows: &NamedRows) -> serde_json::Value {
     let rows: Vec<serde_json::Value> = named_rows
         .rows
         .iter()
-        .map(|row| {
-            serde_json::Value::Array(row.iter().map(datavalue_to_json).collect())
-        })
+        .map(|row| serde_json::Value::Array(row.iter().map(datavalue_to_json).collect()))
         .collect();
 
     serde_json::json!({
@@ -2825,7 +3052,11 @@ fn json_to_named_rows(val: &serde_json::Value) -> Result<NamedRows> {
         })
         .collect();
 
-    Ok(NamedRows { headers, rows, next: None })
+    Ok(NamedRows {
+        headers,
+        rows,
+        next: None,
+    })
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -2867,7 +3098,9 @@ fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, ()> {
     let bytes = s.as_bytes();
     let mut result = Vec::new();
     for chunk in bytes.chunks(4) {
-        if chunk.len() < 2 { break; }
+        if chunk.len() < 2 {
+            break;
+        }
         let a = char_val(chunk[0])?;
         let b = char_val(chunk[1])?;
         result.push(((a << 2) | (b >> 4)) as u8);

@@ -110,9 +110,7 @@ fn bench_traversal(c: &mut Criterion) {
     // Build a chain: n0 -> n1 -> n2 -> ... -> n9
     let mut uids = Vec::new();
     for i in 0..10 {
-        let n = graph
-            .add_entity(&format!("Node {}", i), "test")
-            .unwrap();
+        let n = graph.add_entity(&format!("Node {}", i), "test").unwrap();
         uids.push(n.uid);
     }
     for i in 0..9 {
@@ -143,13 +141,9 @@ fn bench_stats(c: &mut Criterion) {
 fn bench_export_import(c: &mut Criterion) {
     let graph = MindGraph::open_in_memory().unwrap();
     for i in 0..20 {
-        graph
-            .add_entity(&format!("Entity {}", i), "test")
-            .unwrap();
+        graph.add_entity(&format!("Entity {}", i), "test").unwrap();
     }
-    c.bench_function("export_typed", |b| {
-        b.iter(|| graph.export_typed().unwrap())
-    });
+    c.bench_function("export_typed", |b| b.iter(|| graph.export_typed().unwrap()));
 }
 
 criterion_group!(

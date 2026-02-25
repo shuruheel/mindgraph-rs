@@ -60,6 +60,11 @@ async fn auth_middleware(
     request: Request,
     next: Next,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    // Skip auth for health check endpoint
+    if request.uri().path() == "/health" {
+        return Ok(next.run(request).await);
+    }
+
     if let Some(expected) = &state.token {
         let provided = headers
             .get("authorization")
@@ -1032,8 +1037,8 @@ async fn purge(
 // ---- Router & Main ----
 
 fn app(state: Arc<AppState>) -> Router {
-    // Authenticated routes — auth middleware applied to all of these
-    let api = Router::new()
+    Router::new()
+        .route("/health", get(health))
         .route("/stats", get(get_stats))
         // Convenience constructors
         .route("/entity", post(add_entity))
@@ -1074,15 +1079,10 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
-        .route_layer(middleware::from_fn_with_state(
+        .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
-        ));
-
-    // Health check is unauthenticated
-    Router::new()
-        .route("/health", get(health))
-        .merge(api)
+        ))
         .with_state(state)
 }
 

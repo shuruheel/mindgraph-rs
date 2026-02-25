@@ -1050,7 +1050,10 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/summary", post(add_summary))
         // Generic node CRUD
         .route("/node", post(add_node))
-        .route("/node/{uid}", get(get_node).patch(update_node).delete(delete_node))
+        .route(
+            "/node/{uid}",
+            get(get_node).patch(update_node).delete(delete_node),
+        )
         .route("/node/{uid}/history", get(get_node_history))
         .route("/node/{uid}/history/{version}", get(get_node_at_version))
         // Edges
@@ -1079,10 +1082,12 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
-        .layer(middleware::from_fn(move |headers: HeaderMap, req: Request, next: Next| {
-            let token = token.clone();
-            auth_middleware(token, headers, req, next)
-        }))
+        .layer(middleware::from_fn(
+            move |headers: HeaderMap, req: Request, next: Next| {
+                let token = token.clone();
+                auth_middleware(token, headers, req, next)
+            },
+        ))
         .with_state(state)
 }
 

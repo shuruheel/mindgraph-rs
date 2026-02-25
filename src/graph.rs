@@ -8,10 +8,9 @@ use crate::error::{Error, Result};
 use crate::events::{EventFilter, GraphEvent, SubscriptionId};
 use crate::provenance::ProvenanceRecord;
 use crate::query::{
-    BatchResult, Contradiction, DecayResult, GraphOp, GraphSnapshot, GraphStats,
-    ImportResult, MergeResult, NodeFilter, Page, Pagination, PurgeResult,
-    SearchOptions, SearchResult, TombstoneResult, TypedImportResult, TypedSnapshot,
-    ValidatedBatch, VersionRecord,
+    BatchResult, Contradiction, DecayResult, GraphOp, GraphSnapshot, GraphStats, ImportResult,
+    MergeResult, NodeFilter, Page, Pagination, PurgeResult, SearchOptions, SearchResult,
+    TombstoneResult, TypedImportResult, TypedSnapshot, ValidatedBatch, VersionRecord,
 };
 use crate::schema::edge::{CreateEdge, GraphEdge};
 use crate::schema::edge_props::EdgeProps;
@@ -118,12 +117,18 @@ impl MindGraph {
 
     /// Set the default agent identity for operations that don't specify one.
     pub fn set_default_agent(&self, name: impl Into<String>) {
-        *self.default_agent.write().unwrap_or_else(|e| e.into_inner()) = name.into();
+        *self
+            .default_agent
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = name.into();
     }
 
     /// Get the current default agent identity.
     pub fn default_agent(&self) -> String {
-        self.default_agent.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.default_agent
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Access the underlying storage for advanced queries.
@@ -180,7 +185,10 @@ impl MindGraph {
         self.storage
             .insert_node_version(&node.uid, 1, snapshot, &agent, "create", "")?;
 
-        self.emit(GraphEvent::NodeAdded { node: Box::new(node.clone()), changed_by: agent });
+        self.emit(GraphEvent::NodeAdded {
+            node: Box::new(node.clone()),
+            changed_by: agent,
+        });
 
         Ok(node)
     }
@@ -247,8 +255,14 @@ impl MindGraph {
         self.storage.insert_node(&node)?;
 
         let snapshot = serde_json::to_value(&node)?;
-        self.storage
-            .insert_node_version(&node.uid, node.version, snapshot, changed_by, "update", reason)?;
+        self.storage.insert_node_version(
+            &node.uid,
+            node.version,
+            snapshot,
+            changed_by,
+            "update",
+            reason,
+        )?;
 
         self.emit(GraphEvent::NodeUpdated {
             uid: node.uid.clone(),
@@ -352,7 +366,10 @@ impl MindGraph {
         self.storage
             .insert_edge_version(&edge.uid, 1, snapshot, &agent, "create", "")?;
 
-        self.emit(GraphEvent::EdgeAdded { edge: Box::new(edge.clone()), changed_by: agent });
+        self.emit(GraphEvent::EdgeAdded {
+            edge: Box::new(edge.clone()),
+            changed_by: agent,
+        });
 
         Ok(edge)
     }
@@ -418,8 +435,14 @@ impl MindGraph {
         self.storage.insert_edge(&edge)?;
 
         let snapshot = serde_json::to_value(&edge)?;
-        self.storage
-            .insert_edge_version(&edge.uid, edge.version, snapshot, changed_by, "update", reason)?;
+        self.storage.insert_edge_version(
+            &edge.uid,
+            edge.version,
+            snapshot,
+            changed_by,
+            "update",
+            reason,
+        )?;
 
         Ok(edge)
     }
@@ -439,8 +462,14 @@ impl MindGraph {
         self.storage.insert_node(&node)?;
 
         let snapshot = serde_json::to_value(&node)?;
-        self.storage
-            .insert_node_version(&node.uid, node.version, snapshot, by, "tombstone", reason)?;
+        self.storage.insert_node_version(
+            &node.uid,
+            node.version,
+            snapshot,
+            by,
+            "tombstone",
+            reason,
+        )?;
 
         self.emit(GraphEvent::NodeTombstoned {
             uid: uid.clone(),
@@ -472,8 +501,14 @@ impl MindGraph {
         self.storage.insert_node(&node)?;
 
         let snapshot = serde_json::to_value(&node)?;
-        self.storage
-            .insert_node_version(&node.uid, node.version, snapshot, "system", "restore", "")?;
+        self.storage.insert_node_version(
+            &node.uid,
+            node.version,
+            snapshot,
+            "system",
+            "restore",
+            "",
+        )?;
 
         Ok(())
     }
@@ -491,8 +526,14 @@ impl MindGraph {
         self.storage.insert_edge(&edge)?;
 
         let snapshot = serde_json::to_value(&edge)?;
-        self.storage
-            .insert_edge_version(&edge.uid, edge.version, snapshot, by, "tombstone", reason)?;
+        self.storage.insert_edge_version(
+            &edge.uid,
+            edge.version,
+            snapshot,
+            by,
+            "tombstone",
+            reason,
+        )?;
 
         self.emit(GraphEvent::EdgeTombstoned {
             uid: uid.clone(),
@@ -523,8 +564,14 @@ impl MindGraph {
         self.storage.insert_edge(&edge)?;
 
         let snapshot = serde_json::to_value(&edge)?;
-        self.storage
-            .insert_edge_version(&edge.uid, edge.version, snapshot, "system", "restore", "")?;
+        self.storage.insert_edge_version(
+            &edge.uid,
+            edge.version,
+            snapshot,
+            "system",
+            "restore",
+            "",
+        )?;
 
         Ok(())
     }
@@ -557,7 +604,8 @@ impl MindGraph {
 
     /// Register an alias for an entity.
     pub fn add_alias(&self, alias_text: &str, canonical_uid: &Uid, match_score: f64) -> Result<()> {
-        self.storage.insert_alias(alias_text, canonical_uid, match_score)
+        self.storage
+            .insert_alias(alias_text, canonical_uid, match_score)
     }
 
     /// Resolve a text string to a canonical entity UID.
@@ -569,9 +617,9 @@ impl MindGraph {
 
     /// Get all active goals, ranked by priority.
     pub fn active_goals(&self) -> Result<Vec<GraphNode>> {
-        let mut goals = self
-            .storage
-            .query_nodes_by_type_and_prop(NodeType::Goal, "status", "active")?;
+        let mut goals =
+            self.storage
+                .query_nodes_by_type_and_prop(NodeType::Goal, "status", "active")?;
         goals.sort_by_key(|g| {
             let p = g
                 .props
@@ -592,9 +640,9 @@ impl MindGraph {
 
     /// Get all pending approvals.
     pub fn pending_approvals(&self) -> Result<Vec<GraphNode>> {
-        let mut approvals = self
-            .storage
-            .query_nodes_by_type_and_prop(NodeType::Approval, "status", "pending")?;
+        let mut approvals =
+            self.storage
+                .query_nodes_by_type_and_prop(NodeType::Approval, "status", "pending")?;
         approvals.sort_by(|a, b| {
             let at_a = a
                 .props
@@ -641,11 +689,19 @@ impl MindGraph {
                 node_b_label: extract_string(&row[4])?,
                 description: {
                     let s = extract_string(&row[5])?;
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 },
                 contradiction_type: {
                     let s = extract_string(&row[6])?;
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 },
             });
         }
@@ -654,14 +710,20 @@ impl MindGraph {
 
     /// Get open decisions.
     pub fn open_decisions(&self) -> Result<Vec<GraphNode>> {
-        self.storage
-            .query_nodes_by_type_and_prop_in(NodeType::Decision, "status", &["open", "deliberating"])
+        self.storage.query_nodes_by_type_and_prop_in(
+            NodeType::Decision,
+            "status",
+            &["open", "deliberating"],
+        )
     }
 
     /// Get open questions.
     pub fn open_questions(&self) -> Result<Vec<GraphNode>> {
-        self.storage
-            .query_nodes_by_type_and_prop_in(NodeType::OpenQuestion, "status", &["open", "partially_addressed"])
+        self.storage.query_nodes_by_type_and_prop_in(
+            NodeType::OpenQuestion,
+            "status",
+            &["open", "partially_addressed"],
+        )
     }
 
     /// Get claims with confidence below a threshold, sorted ascending.
@@ -702,8 +764,13 @@ impl MindGraph {
     /// Get all nodes reachable from a starting node.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, opts)))]
     pub fn reachable(&self, start: &Uid, opts: &TraversalOptions) -> Result<Vec<PathStep>> {
-        self.storage
-            .traverse_reachable(start, &opts.direction, &opts.edge_types, opts.max_depth, opts.weight_threshold)
+        self.storage.traverse_reachable(
+            start,
+            &opts.direction,
+            &opts.edge_types,
+            opts.max_depth,
+            opts.weight_threshold,
+        )
     }
 
     /// Follow a reasoning chain from a claim node through epistemic edges (both directions).
@@ -751,7 +818,12 @@ impl MindGraph {
 
     /// Find a path between two nodes by backtracking parent pointers from target to source.
     /// Returns only the nodes on the actual path (excluding the start node).
-    pub fn find_path(&self, from: &Uid, to: &Uid, opts: &TraversalOptions) -> Result<Option<Vec<PathStep>>> {
+    pub fn find_path(
+        &self,
+        from: &Uid,
+        to: &Uid,
+        opts: &TraversalOptions,
+    ) -> Result<Option<Vec<PathStep>>> {
         let steps = self.reachable(from, opts)?;
 
         // Check if 'to' is reachable
@@ -787,15 +859,26 @@ impl MindGraph {
         start: &Uid,
         opts: &TraversalOptions,
     ) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
-        self.storage
-            .subgraph(start, &opts.direction, &opts.edge_types, opts.max_depth, opts.weight_threshold)
+        self.storage.subgraph(
+            start,
+            &opts.direction,
+            &opts.edge_types,
+            opts.max_depth,
+            opts.weight_threshold,
+        )
     }
 
     // ---- Pagination ----
 
     /// Get nodes in a layer with pagination.
-    pub fn nodes_in_layer_paginated(&self, layer: Layer, page: Pagination) -> Result<Page<GraphNode>> {
-        let (items, has_more) = self.storage.query_nodes_by_layer_paginated(layer, page.limit, page.offset)?;
+    pub fn nodes_in_layer_paginated(
+        &self,
+        layer: Layer,
+        page: Pagination,
+    ) -> Result<Page<GraphNode>> {
+        let (items, has_more) =
+            self.storage
+                .query_nodes_by_layer_paginated(layer, page.limit, page.offset)?;
         Ok(Page {
             items,
             offset: page.offset,
@@ -811,7 +894,9 @@ impl MindGraph {
         edge_type: Option<EdgeType>,
         page: Pagination,
     ) -> Result<Page<GraphEdge>> {
-        let (items, has_more) = self.storage.query_edges_from_paginated(uid, edge_type, page.limit, page.offset)?;
+        let (items, has_more) =
+            self.storage
+                .query_edges_from_paginated(uid, edge_type, page.limit, page.offset)?;
         Ok(Page {
             items,
             offset: page.offset,
@@ -821,10 +906,19 @@ impl MindGraph {
     }
 
     /// Get weak claims with pagination.
-    pub fn weak_claims_paginated(&self, threshold: f64, page: Pagination) -> Result<Page<GraphNode>> {
+    pub fn weak_claims_paginated(
+        &self,
+        threshold: f64,
+        page: Pagination,
+    ) -> Result<Page<GraphNode>> {
         let (items, has_more) = self
             .storage
-            .query_nodes_by_type_below_confidence_paginated(NodeType::Claim, threshold, page.limit, page.offset)?;
+            .query_nodes_by_type_below_confidence_paginated(
+                NodeType::Claim,
+                threshold,
+                page.limit,
+                page.offset,
+            )?;
         Ok(Page {
             items,
             offset: page.offset,
@@ -853,7 +947,9 @@ impl MindGraph {
         edge_type: Option<EdgeType>,
         page: Pagination,
     ) -> Result<Page<GraphEdge>> {
-        let (items, has_more) = self.storage.query_edges_to_paginated(uid, edge_type, page.limit, page.offset)?;
+        let (items, has_more) =
+            self.storage
+                .query_edges_to_paginated(uid, edge_type, page.limit, page.offset)?;
         Ok(Page {
             items,
             offset: page.offset,
@@ -1028,7 +1124,8 @@ impl MindGraph {
 
         // Handle OR filters: union results from sub-filters
         if let Some(ref or_filters) = filter.or_filters {
-            let mut uid_set: std::collections::HashSet<Uid> = results.iter().map(|n| n.uid.clone()).collect();
+            let mut uid_set: std::collections::HashSet<Uid> =
+                results.iter().map(|n| n.uid.clone()).collect();
             for sub in or_filters {
                 let sub_results = self.find_nodes(sub)?;
                 for node in sub_results {
@@ -1047,7 +1144,11 @@ impl MindGraph {
         let items = self.find_nodes(filter)?;
         let limit = filter.limit.unwrap_or(100) as usize;
         let has_more = items.len() > limit;
-        let items = if has_more { items[..limit].to_vec() } else { items };
+        let items = if has_more {
+            items[..limit].to_vec()
+        } else {
+            items
+        };
         Ok(Page {
             items,
             offset: filter.offset.unwrap_or(0),
@@ -1207,10 +1308,13 @@ impl MindGraph {
     pub fn add_claim(&self, label: &str, content: &str, confidence: f64) -> Result<GraphNode> {
         use crate::schema::props::epistemic::ClaimProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Claim(ClaimProps {
-                content: content.to_string(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Claim(ClaimProps {
+                    content: content.to_string(),
+                    ..Default::default()
+                }),
+            )
             .confidence(Confidence::new(confidence)?),
         )
     }
@@ -1228,30 +1332,39 @@ impl MindGraph {
     /// ```
     pub fn add_entity(&self, label: &str, entity_type: &str) -> Result<GraphNode> {
         use crate::schema::props::reality::EntityProps;
-        self.add_node(CreateNode::new(label, NodeProps::Entity(EntityProps {
-            entity_type: entity_type.to_string(),
-            ..Default::default()
-        })))
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Entity(EntityProps {
+                entity_type: entity_type.to_string(),
+                ..Default::default()
+            }),
+        ))
     }
 
     /// Add a goal node.
     pub fn add_goal(&self, label: &str, priority: &str) -> Result<GraphNode> {
         use crate::schema::props::intent::GoalProps;
-        self.add_node(CreateNode::new(label, NodeProps::Goal(GoalProps {
-            priority: Some(priority.to_string()),
-            status: Some("active".to_string()),
-            ..Default::default()
-        })))
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Goal(GoalProps {
+                priority: Some(priority.to_string()),
+                status: Some("active".to_string()),
+                ..Default::default()
+            }),
+        ))
     }
 
     /// Add an observation node.
     pub fn add_observation(&self, label: &str, description: &str) -> Result<GraphNode> {
         use crate::schema::props::reality::ObservationProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Observation(ObservationProps {
-                content: description.to_string(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Observation(ObservationProps {
+                    content: description.to_string(),
+                    ..Default::default()
+                }),
+            )
             .summary(description),
         )
     }
@@ -1266,10 +1379,13 @@ impl MindGraph {
     pub fn add_session(&self, label: &str, focus: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::SessionProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Session(SessionProps {
-                focus_summary: Some(focus.to_string()),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Session(SessionProps {
+                    focus_summary: Some(focus.to_string()),
+                    ..Default::default()
+                }),
+            )
             .summary(focus),
         )
     }
@@ -1277,23 +1393,27 @@ impl MindGraph {
     /// Add a preference node.
     pub fn add_preference(&self, label: &str, key: &str, value: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::PreferenceProps;
-        self.add_node(
-            CreateNode::new(label, NodeProps::Preference(PreferenceProps {
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Preference(PreferenceProps {
                 key: key.to_string(),
                 value: value.to_string(),
                 ..Default::default()
-            })),
-        )
+            }),
+        ))
     }
 
     /// Add a summary node.
     pub fn add_summary(&self, label: &str, content: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::SummaryProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Summary(SummaryProps {
-                content: content.to_string(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Summary(SummaryProps {
+                    content: content.to_string(),
+                    ..Default::default()
+                }),
+            )
             .summary(content),
         )
     }
@@ -1363,7 +1483,10 @@ impl MindGraph {
             });
         }
         self.storage.create_embedding_schema(dimension)?;
-        *self.embedding_dim.write().unwrap_or_else(|e| e.into_inner()) = Some(dimension);
+        *self
+            .embedding_dim
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(dimension);
         Ok(())
     }
 
@@ -1374,7 +1497,8 @@ impl MindGraph {
 
     /// Set the embedding vector for a node.
     pub fn set_embedding(&self, uid: &Uid, embedding: &[f32]) -> Result<()> {
-        let dim = self.embedding_dimension()
+        let dim = self
+            .embedding_dimension()
             .ok_or(Error::EmbeddingNotConfigured)?;
         if embedding.len() != dim {
             return Err(Error::EmbeddingDimensionMismatch {
@@ -1415,7 +1539,9 @@ impl MindGraph {
         let mut results = Vec::new();
 
         loop {
-            let raw = self.storage.semantic_search_raw(query_vec, fetch_size, fetch_size)?;
+            let raw = self
+                .storage
+                .semantic_search_raw(query_vec, fetch_size, fetch_size)?;
             let raw_len = raw.len();
             results.clear();
             for (uid, dist) in raw {
@@ -1505,7 +1631,9 @@ impl MindGraph {
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn decay_salience(&self, half_life_secs: f64) -> Result<DecayResult> {
         let current_time = now();
-        let changed = self.storage.apply_salience_decay(half_life_secs, current_time)?;
+        let changed = self
+            .storage
+            .apply_salience_decay(half_life_secs, current_time)?;
 
         let below_threshold = changed.iter().filter(|(_, _, new_s)| *new_s < 0.1).count();
 
@@ -1518,7 +1646,9 @@ impl MindGraph {
     /// Auto-tombstone nodes with salience below a threshold and older than min_age_secs.
     pub fn auto_tombstone(&self, min_salience: f64, min_age_secs: f64) -> Result<usize> {
         let cutoff = now() - min_age_secs;
-        let uids = self.storage.query_low_salience_old_nodes(min_salience, cutoff)?;
+        let uids = self
+            .storage
+            .query_low_salience_old_nodes(min_salience, cutoff)?;
         let count = uids.len();
         for uid in &uids {
             self.tombstone(uid, "auto_tombstone: low salience", "system")?;
@@ -1531,13 +1661,19 @@ impl MindGraph {
     /// Register a callback for graph change events.
     pub fn on_change(&self, cb: impl Fn(&GraphEvent) + Send + Sync + 'static) -> SubscriptionId {
         let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).insert(id, Box::new(cb));
+        self.subscribers
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, Box::new(cb));
         id
     }
 
     /// Remove a subscription.
     pub fn unsubscribe(&self, id: SubscriptionId) {
-        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        self.subscribers
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
     }
 
     /// Register a filtered callback for graph change events.
@@ -1650,7 +1786,8 @@ impl MindGraph {
         };
 
         // Track UIDs that will be added in this batch
-        let mut pending_node_uids: std::collections::HashSet<Uid> = std::collections::HashSet::new();
+        let mut pending_node_uids: std::collections::HashSet<Uid> =
+            std::collections::HashSet::new();
 
         for op in ops {
             match op {
@@ -1736,12 +1873,15 @@ impl MindGraph {
         to_uid: &Uid,
         edge_type: Option<EdgeType>,
     ) -> Result<Vec<GraphEdge>> {
-        self.storage.query_edges_between(from_uid, to_uid, edge_type)
+        self.storage
+            .query_edges_between(from_uid, to_uid, edge_type)
     }
 
     /// List all live nodes with pagination.
     pub fn list_nodes(&self, page: Pagination) -> Result<Page<GraphNode>> {
-        let (items, has_more) = self.storage.query_all_live_nodes_paginated(page.limit, page.offset)?;
+        let (items, has_more) = self
+            .storage
+            .query_all_live_nodes_paginated(page.limit, page.offset)?;
         Ok(Page {
             items,
             offset: page.offset,
@@ -1789,7 +1929,10 @@ impl MindGraph {
         self.storage
             .insert_node_version(&node.uid, 1, snapshot, changed_by, "create", "")?;
 
-        self.emit(GraphEvent::NodeAdded { node: Box::new(node.clone()), changed_by: changed_by.to_string() });
+        self.emit(GraphEvent::NodeAdded {
+            node: Box::new(node.clone()),
+            changed_by: changed_by.to_string(),
+        });
 
         Ok(node)
     }
@@ -1824,7 +1967,10 @@ impl MindGraph {
         self.storage
             .insert_edge_version(&edge.uid, 1, snapshot, changed_by, "create", "")?;
 
-        self.emit(GraphEvent::EdgeAdded { edge: Box::new(edge.clone()), changed_by: changed_by.to_string() });
+        self.emit(GraphEvent::EdgeAdded {
+            edge: Box::new(edge.clone()),
+            changed_by: changed_by.to_string(),
+        });
 
         Ok(edge)
     }
@@ -1843,7 +1989,12 @@ impl MindGraph {
     }
 
     /// Tombstone-cascade with an explicit agent identity.
-    pub fn tombstone_cascade_as(&self, uid: &Uid, reason: &str, by: &str) -> Result<TombstoneResult> {
+    pub fn tombstone_cascade_as(
+        &self,
+        uid: &Uid,
+        reason: &str,
+        by: &str,
+    ) -> Result<TombstoneResult> {
         let connected_edges = self.storage.query_edges_connected(uid)?;
         let mut edges_tombstoned = 0;
         for edge in &connected_edges {
@@ -1862,7 +2013,10 @@ impl MindGraph {
     /// Delete all data from the graph. **Destructive operation** intended for testing and reset.
     pub fn clear(&self) -> Result<()> {
         self.storage.clear_all()?;
-        *self.embedding_dim.write().unwrap_or_else(|e| e.into_inner()) = None;
+        *self
+            .embedding_dim
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = None;
         Ok(())
     }
 }

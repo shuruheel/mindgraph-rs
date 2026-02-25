@@ -8,7 +8,11 @@ fn main() -> Result<()> {
 
     // Record a session
     let session = graph.add_session("Planning meeting", "Discussed Q2 roadmap and priorities")?;
-    println!("Session: {} (salience={:.2})", session.label, session.salience.value());
+    println!(
+        "Session: {} (salience={:.2})",
+        session.label,
+        session.salience.value()
+    );
 
     // Record preferences
     let pref1 = graph.add_preference("Code style", "indent", "4 spaces")?;
@@ -41,7 +45,11 @@ fn main() -> Result<()> {
 
     // Export and reimport
     let snapshot = graph.export_typed()?;
-    println!("Exported {} nodes, {} edges", snapshot.nodes.len(), snapshot.edges.len());
+    println!(
+        "Exported {} nodes, {} edges",
+        snapshot.nodes.len(),
+        snapshot.edges.len()
+    );
 
     Ok(())
 }

@@ -119,7 +119,16 @@ fn test_update_node_type_mismatch() {
 
     let wrong_props = NodeProps::Source(SourceProps::default());
     let err = g
-        .update_node(&node.uid, None, None, None, None, Some(wrong_props), "test", "bad")
+        .update_node(
+            &node.uid,
+            None,
+            None,
+            None,
+            None,
+            Some(wrong_props),
+            "test",
+            "bad",
+        )
         .unwrap_err();
     assert!(matches!(err, Error::TypeMismatch { .. }));
 }
@@ -174,9 +183,7 @@ fn test_edges_from() {
     assert_eq!(edges[0].edge_type, EdgeType::ExtractedFrom);
 
     // Filter by type
-    let edges = g
-        .edges_from(&entity.uid, Some(EdgeType::Supports))
-        .unwrap();
+    let edges = g.edges_from(&entity.uid, Some(EdgeType::Supports)).unwrap();
     assert_eq!(edges.len(), 0);
 }
 
@@ -252,7 +259,9 @@ fn test_alias_resolution() {
 fn test_add_provenance() {
     let g = mem_graph();
     let source = g.add_node(make_source_node()).unwrap();
-    let claim = g.add_node(make_claim_node("Rust is memory safe", 0.95)).unwrap();
+    let claim = g
+        .add_node(make_claim_node("Rust is memory safe", 0.95))
+        .unwrap();
 
     let record = ProvenanceRecord {
         node_uid: claim.uid.clone(),
@@ -539,34 +548,106 @@ fn test_create_node_all_layers() {
     let g = mem_graph();
 
     // Reality
-    g.add_node(CreateNode::new("src", NodeProps::Source(SourceProps::default()))).unwrap();
-    g.add_node(CreateNode::new("snip", NodeProps::Snippet(SnippetProps::default()))).unwrap();
-    g.add_node(CreateNode::new("ent", NodeProps::Entity(EntityProps::default()))).unwrap();
-    g.add_node(CreateNode::new("obs", NodeProps::Observation(ObservationProps::default()))).unwrap();
+    g.add_node(CreateNode::new(
+        "src",
+        NodeProps::Source(SourceProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "snip",
+        NodeProps::Snippet(SnippetProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "ent",
+        NodeProps::Entity(EntityProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "obs",
+        NodeProps::Observation(ObservationProps::default()),
+    ))
+    .unwrap();
 
     // Epistemic
-    g.add_node(CreateNode::new("claim", NodeProps::Claim(ClaimProps::default()))).unwrap();
-    g.add_node(CreateNode::new("evidence", NodeProps::Evidence(EvidenceProps::default()))).unwrap();
-    g.add_node(CreateNode::new("concept", NodeProps::Concept(ConceptProps::default()))).unwrap();
-    g.add_node(CreateNode::new("hypothesis", NodeProps::Hypothesis(HypothesisProps::default()))).unwrap();
+    g.add_node(CreateNode::new(
+        "claim",
+        NodeProps::Claim(ClaimProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "evidence",
+        NodeProps::Evidence(EvidenceProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "concept",
+        NodeProps::Concept(ConceptProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "hypothesis",
+        NodeProps::Hypothesis(HypothesisProps::default()),
+    ))
+    .unwrap();
 
     // Intent
-    g.add_node(CreateNode::new("goal", NodeProps::Goal(GoalProps::default()))).unwrap();
-    g.add_node(CreateNode::new("project", NodeProps::Project(ProjectProps::default()))).unwrap();
-    g.add_node(CreateNode::new("decision", NodeProps::Decision(DecisionProps::default()))).unwrap();
+    g.add_node(CreateNode::new(
+        "goal",
+        NodeProps::Goal(GoalProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "project",
+        NodeProps::Project(ProjectProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "decision",
+        NodeProps::Decision(DecisionProps::default()),
+    ))
+    .unwrap();
 
     // Action
-    g.add_node(CreateNode::new("flow", NodeProps::Flow(FlowProps::default()))).unwrap();
-    g.add_node(CreateNode::new("affordance", NodeProps::Affordance(AffordanceProps::default()))).unwrap();
+    g.add_node(CreateNode::new(
+        "flow",
+        NodeProps::Flow(FlowProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "affordance",
+        NodeProps::Affordance(AffordanceProps::default()),
+    ))
+    .unwrap();
 
     // Memory
-    g.add_node(CreateNode::new("session", NodeProps::Session(SessionProps::default()))).unwrap();
-    g.add_node(CreateNode::new("pref", NodeProps::Preference(PreferenceProps::default()))).unwrap();
+    g.add_node(CreateNode::new(
+        "session",
+        NodeProps::Session(SessionProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "pref",
+        NodeProps::Preference(PreferenceProps::default()),
+    ))
+    .unwrap();
 
     // Agent
-    g.add_node(CreateNode::new("agent", NodeProps::Agent(AgentProps::default()))).unwrap();
-    g.add_node(CreateNode::new("task", NodeProps::Task(TaskProps::default()))).unwrap();
-    g.add_node(CreateNode::new("plan", NodeProps::Plan(PlanProps::default()))).unwrap();
+    g.add_node(CreateNode::new(
+        "agent",
+        NodeProps::Agent(AgentProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "task",
+        NodeProps::Task(TaskProps::default()),
+    ))
+    .unwrap();
+    g.add_node(CreateNode::new(
+        "plan",
+        NodeProps::Plan(PlanProps::default()),
+    ))
+    .unwrap();
 }
 
 // ---- Open Questions and Decisions ----
@@ -846,11 +927,7 @@ fn test_node_update_builder_partial() {
     let node = g.add_node(make_entity_node("Rust")).unwrap();
 
     // Only update label, leave everything else
-    let updated = g
-        .update(&node.uid)
-        .label("Rust Language")
-        .apply()
-        .unwrap();
+    let updated = g.update(&node.uid).label("Rust Language").apply().unwrap();
 
     assert_eq!(updated.label, "Rust Language");
     assert_eq!(updated.version, 2);
@@ -892,8 +969,14 @@ fn test_reasoning_chain_traversal() {
     let g = mem_graph();
 
     // Build: Evidence --(SUPPORTS)--> Claim, Evidence --(EXTRACTED_FROM)--> Source
-    let claim = g.add_node(make_claim_node("Rust is memory safe", 0.9)).unwrap();
-    let evidence = g.add_node(make_evidence_node("Borrow checker prevents dangling pointers")).unwrap();
+    let claim = g
+        .add_node(make_claim_node("Rust is memory safe", 0.9))
+        .unwrap();
+    let evidence = g
+        .add_node(make_evidence_node(
+            "Borrow checker prevents dangling pointers",
+        ))
+        .unwrap();
     let source = g.add_node(make_source_node()).unwrap();
 
     g.add_edge(CreateEdge::new(
@@ -957,7 +1040,9 @@ fn test_neighborhood() {
 fn test_reachable_with_edge_type_filter() {
     let g = mem_graph();
     let claim = g.add_node(make_claim_node("Main claim", 0.9)).unwrap();
-    let support = g.add_node(make_evidence_node("Supporting evidence")).unwrap();
+    let support = g
+        .add_node(make_evidence_node("Supporting evidence"))
+        .unwrap();
     let unrelated = g.add_node(make_entity_node("Unrelated")).unwrap();
 
     g.add_edge(CreateEdge::new(
@@ -1000,14 +1085,20 @@ fn test_find_path() {
     g.add_edge(CreateEdge::new(
         a.uid.clone(),
         b.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
     ))
     .unwrap();
 
     g.add_edge(CreateEdge::new(
         b.uid.clone(),
         c.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
     ))
     .unwrap();
 
@@ -1038,17 +1129,32 @@ fn test_find_path_ignores_branches() {
 
     // A→B→C and A→D (branch)
     g.add_edge(CreateEdge::new(
-        a.uid.clone(), b.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
-    )).unwrap();
+        a.uid.clone(),
+        b.uid.clone(),
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
+    ))
+    .unwrap();
     g.add_edge(CreateEdge::new(
-        b.uid.clone(), c.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
-    )).unwrap();
+        b.uid.clone(),
+        c.uid.clone(),
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
+    ))
+    .unwrap();
     g.add_edge(CreateEdge::new(
-        a.uid.clone(), d.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
-    )).unwrap();
+        a.uid.clone(),
+        d.uid.clone(),
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
+    ))
+    .unwrap();
 
     let opts = TraversalOptions {
         direction: Direction::Outgoing,
@@ -1076,14 +1182,20 @@ fn test_subgraph() {
     g.add_edge(CreateEdge::new(
         a.uid.clone(),
         b.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
     ))
     .unwrap();
 
     g.add_edge(CreateEdge::new(
         b.uid.clone(),
         c.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.5), support_type: None },
+        EdgeProps::Supports {
+            strength: Some(0.5),
+            support_type: None,
+        },
     ))
     .unwrap();
 
@@ -1105,18 +1217,43 @@ fn test_subgraph() {
 fn test_nodes_in_layer_paginated() {
     let g = mem_graph();
     for i in 0..5 {
-        g.add_node(make_entity_node(&format!("Entity {}", i))).unwrap();
+        g.add_node(make_entity_node(&format!("Entity {}", i)))
+            .unwrap();
     }
 
-    let page1 = g.nodes_in_layer_paginated(Layer::Reality, Pagination { limit: 2, offset: 0 }).unwrap();
+    let page1 = g
+        .nodes_in_layer_paginated(
+            Layer::Reality,
+            Pagination {
+                limit: 2,
+                offset: 0,
+            },
+        )
+        .unwrap();
     assert_eq!(page1.items.len(), 2);
     assert!(page1.has_more);
 
-    let page2 = g.nodes_in_layer_paginated(Layer::Reality, Pagination { limit: 2, offset: 2 }).unwrap();
+    let page2 = g
+        .nodes_in_layer_paginated(
+            Layer::Reality,
+            Pagination {
+                limit: 2,
+                offset: 2,
+            },
+        )
+        .unwrap();
     assert_eq!(page2.items.len(), 2);
     assert!(page2.has_more);
 
-    let page3 = g.nodes_in_layer_paginated(Layer::Reality, Pagination { limit: 2, offset: 4 }).unwrap();
+    let page3 = g
+        .nodes_in_layer_paginated(
+            Layer::Reality,
+            Pagination {
+                limit: 2,
+                offset: 4,
+            },
+        )
+        .unwrap();
     assert_eq!(page3.items.len(), 1);
     assert!(!page3.has_more);
 }
@@ -1125,7 +1262,8 @@ fn test_nodes_in_layer_paginated() {
 fn test_pagination_first() {
     let g = mem_graph();
     for i in 0..10 {
-        g.add_node(make_claim_node(&format!("Claim {}", i), 0.1 * i as f64)).unwrap();
+        g.add_node(make_claim_node(&format!("Claim {}", i), 0.1 * i as f64))
+            .unwrap();
     }
 
     let page = g.weak_claims_paginated(0.5, Pagination::first(3)).unwrap();
@@ -1140,7 +1278,9 @@ fn test_edges_from_paginated() {
     let entity = g.add_node(make_entity_node("Hub")).unwrap();
 
     for i in 0..5 {
-        let target = g.add_node(make_claim_node(&format!("Target {}", i), 0.9)).unwrap();
+        let target = g
+            .add_node(make_claim_node(&format!("Target {}", i), 0.9))
+            .unwrap();
         g.add_edge(CreateEdge::new(
             entity.uid.clone(),
             target.uid.clone(),
@@ -1149,11 +1289,29 @@ fn test_edges_from_paginated() {
         .unwrap();
     }
 
-    let page1 = g.edges_from_paginated(&entity.uid, None, Pagination { limit: 2, offset: 0 }).unwrap();
+    let page1 = g
+        .edges_from_paginated(
+            &entity.uid,
+            None,
+            Pagination {
+                limit: 2,
+                offset: 0,
+            },
+        )
+        .unwrap();
     assert_eq!(page1.items.len(), 2);
     assert!(page1.has_more);
 
-    let page2 = g.edges_from_paginated(&entity.uid, None, Pagination { limit: 10, offset: 0 }).unwrap();
+    let page2 = g
+        .edges_from_paginated(
+            &entity.uid,
+            None,
+            Pagination {
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .unwrap();
     assert_eq!(page2.items.len(), 5);
     assert!(!page2.has_more);
 }
@@ -1164,20 +1322,43 @@ fn test_edges_to_paginated() {
     let target = g.add_node(make_claim_node("Target", 0.9)).unwrap();
 
     for i in 0..5 {
-        let source = g.add_node(make_claim_node(&format!("Source {}", i), 0.8)).unwrap();
+        let source = g
+            .add_node(make_claim_node(&format!("Source {}", i), 0.8))
+            .unwrap();
         g.add_edge(CreateEdge::new(
             source.uid.clone(),
             target.uid.clone(),
-            EdgeProps::Supports { strength: Some(0.5), support_type: None },
+            EdgeProps::Supports {
+                strength: Some(0.5),
+                support_type: None,
+            },
         ))
         .unwrap();
     }
 
-    let page1 = g.edges_to_paginated(&target.uid, None, Pagination { limit: 2, offset: 0 }).unwrap();
+    let page1 = g
+        .edges_to_paginated(
+            &target.uid,
+            None,
+            Pagination {
+                limit: 2,
+                offset: 0,
+            },
+        )
+        .unwrap();
     assert_eq!(page1.items.len(), 2);
     assert!(page1.has_more);
 
-    let page2 = g.edges_to_paginated(&target.uid, None, Pagination { limit: 10, offset: 0 }).unwrap();
+    let page2 = g
+        .edges_to_paginated(
+            &target.uid,
+            None,
+            Pagination {
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .unwrap();
     assert_eq!(page2.items.len(), 5);
     assert!(!page2.has_more);
 }
@@ -1365,14 +1546,10 @@ fn test_send_sync_across_threads() {
     let g = Arc::new(MindGraph::open_in_memory().unwrap());
 
     let g1 = g.clone();
-    let handle1 = std::thread::spawn(move || {
-        g1.add_node(make_entity_node("Thread1")).unwrap()
-    });
+    let handle1 = std::thread::spawn(move || g1.add_node(make_entity_node("Thread1")).unwrap());
 
     let g2 = g.clone();
-    let handle2 = std::thread::spawn(move || {
-        g2.add_node(make_entity_node("Thread2")).unwrap()
-    });
+    let handle2 = std::thread::spawn(move || g2.add_node(make_entity_node("Thread2")).unwrap());
 
     let node1 = handle1.join().unwrap();
     let node2 = handle2.join().unwrap();
@@ -1388,8 +1565,10 @@ fn test_send_sync_across_threads() {
 #[test]
 fn test_fts_search_basic() {
     let g = mem_graph();
-    g.add_node(make_claim_node("Rust is memory safe", 0.9)).unwrap();
-    g.add_node(make_claim_node("Python is interpreted", 0.8)).unwrap();
+    g.add_node(make_claim_node("Rust is memory safe", 0.9))
+        .unwrap();
+    g.add_node(make_claim_node("Python is interpreted", 0.8))
+        .unwrap();
 
     let opts = SearchOptions::new();
     let results = g.search("memory safe", &opts).unwrap();
@@ -1400,7 +1579,8 @@ fn test_fts_search_basic() {
 #[test]
 fn test_fts_search_with_type_filter() {
     let g = mem_graph();
-    g.add_node(make_claim_node("Rust is memory safe", 0.9)).unwrap();
+    g.add_node(make_claim_node("Rust is memory safe", 0.9))
+        .unwrap();
     g.add_node(make_entity_node("Rust")).unwrap();
 
     let mut opts = SearchOptions::new();
@@ -1414,7 +1594,8 @@ fn test_fts_search_with_type_filter() {
 #[test]
 fn test_fts_search_no_results() {
     let g = mem_graph();
-    g.add_node(make_claim_node("Rust is memory safe", 0.9)).unwrap();
+    g.add_node(make_claim_node("Rust is memory safe", 0.9))
+        .unwrap();
 
     let opts = SearchOptions::new();
     let results = g.search("quantum physics entanglement", &opts).unwrap();
@@ -1424,7 +1605,9 @@ fn test_fts_search_no_results() {
 #[test]
 fn test_fts_search_excludes_tombstoned() {
     let g = mem_graph();
-    let node = g.add_node(make_claim_node("Rust is memory safe", 0.9)).unwrap();
+    let node = g
+        .add_node(make_claim_node("Rust is memory safe", 0.9))
+        .unwrap();
     g.tombstone(&node.uid, "obsolete", "test").unwrap();
 
     let opts = SearchOptions::new();
@@ -1486,14 +1669,16 @@ fn test_find_nodes_combined_filters() {
             status: Some("active".into()),
             ..Default::default()
         }),
-    )).unwrap();
+    ))
+    .unwrap();
     g.add_node(CreateNode::new(
         "Completed Goal",
         NodeProps::Goal(GoalProps {
             status: Some("completed".into()),
             ..Default::default()
         }),
-    )).unwrap();
+    ))
+    .unwrap();
     g.add_node(make_claim_node("Not a goal", 0.9)).unwrap();
 
     let filter = NodeFilter::new()
@@ -1551,7 +1736,8 @@ fn test_purge_cleans_aliases_and_provenance() {
         text_span: "span".into(),
         extracted_by: "test".into(),
         extracted_at: now(),
-    }).unwrap();
+    })
+    .unwrap();
 
     g.tombstone(&node.uid, "cleanup", "test").unwrap();
     let result = g.purge_tombstoned(None).unwrap();
@@ -1600,9 +1786,7 @@ fn test_into_shared() {
     let g = MindGraph::open_in_memory().unwrap().into_shared();
 
     let g1 = g.clone();
-    let handle = std::thread::spawn(move || {
-        g1.add_node(make_entity_node("Thread")).unwrap()
-    });
+    let handle = std::thread::spawn(move || g1.add_node(make_entity_node("Thread")).unwrap());
 
     let node = handle.join().unwrap();
     assert!(g.node_exists(&node.uid).unwrap());
@@ -1638,18 +1822,30 @@ fn test_traversal_weight_threshold() {
     // High weight edge A->B
     g.add_edge(
         CreateEdge::new(
-            a.uid.clone(), b.uid.clone(),
-            EdgeProps::Supports { strength: Some(0.9), support_type: None },
-        ).weight(0.9),
-    ).unwrap();
+            a.uid.clone(),
+            b.uid.clone(),
+            EdgeProps::Supports {
+                strength: Some(0.9),
+                support_type: None,
+            },
+        )
+        .weight(0.9),
+    )
+    .unwrap();
 
     // Low weight edge A->C
     g.add_edge(
         CreateEdge::new(
-            a.uid.clone(), c.uid.clone(),
-            EdgeProps::Supports { strength: Some(0.1), support_type: None },
-        ).weight(0.1),
-    ).unwrap();
+            a.uid.clone(),
+            c.uid.clone(),
+            EdgeProps::Supports {
+                strength: Some(0.1),
+                support_type: None,
+            },
+        )
+        .weight(0.1),
+    )
+    .unwrap();
 
     // With high threshold, only B should be reachable
     let opts = TraversalOptions {
@@ -1682,8 +1878,12 @@ fn test_pathstep_types() {
     g.add_edge(CreateEdge::new(
         evidence.uid.clone(),
         claim.uid.clone(),
-        EdgeProps::Supports { strength: Some(0.8), support_type: None },
-    )).unwrap();
+        EdgeProps::Supports {
+            strength: Some(0.8),
+            support_type: None,
+        },
+    ))
+    .unwrap();
 
     let chain = g.reasoning_chain(&claim.uid, 3).unwrap();
     // Start node has NodeType enum and edge_type is None
@@ -1717,19 +1917,24 @@ fn test_merge_entities() {
     let g = mem_graph();
     let keep = g.add_node(make_entity_node("Rust")).unwrap();
     let merge = g.add_node(make_entity_node("rust-lang")).unwrap();
-    let other = g.add_node(make_claim_node("Claim about rust-lang", 0.9)).unwrap();
+    let other = g
+        .add_node(make_claim_node("Claim about rust-lang", 0.9))
+        .unwrap();
 
     // Edge from merge node
     g.add_edge(CreateEdge::new(
         merge.uid.clone(),
         other.uid.clone(),
         EdgeProps::InstanceOf {},
-    )).unwrap();
+    ))
+    .unwrap();
 
     // Alias on merge node
     g.add_alias("rust-lang", &merge.uid, 0.9).unwrap();
 
-    let result = g.merge_entities(&keep.uid, &merge.uid, "duplicate", "test").unwrap();
+    let result = g
+        .merge_entities(&keep.uid, &merge.uid, "duplicate", "test")
+        .unwrap();
     assert_eq!(result.edges_retargeted, 1);
     assert_eq!(result.aliases_merged, 1);
 
@@ -1749,7 +1954,8 @@ fn test_merge_entities() {
 fn test_fuzzy_resolve() {
     let g = mem_graph();
     let entity = g.add_node(make_entity_node("Rust")).unwrap();
-    g.add_alias("Rust programming language", &entity.uid, 0.9).unwrap();
+    g.add_alias("Rust programming language", &entity.uid, 0.9)
+        .unwrap();
 
     let results = g.fuzzy_resolve("programming", 10).unwrap();
     assert!(!results.is_empty());
@@ -2007,10 +2213,9 @@ fn test_decay_salience() {
 fn test_auto_tombstone() {
     let g = mem_graph();
     // Create nodes and set very low salience
-    let n = g.add_node(
-        make_claim_node("Low salience", 0.5)
-            .salience(Salience::new(0.01).unwrap()),
-    ).unwrap();
+    let n = g
+        .add_node(make_claim_node("Low salience", 0.5).salience(Salience::new(0.01).unwrap()))
+        .unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(10));
 
@@ -2067,8 +2272,8 @@ fn test_filter_prop_conditions() {
     g.add_claim("Alpha", "alpha content", 0.9).unwrap();
     g.add_claim("Beta", "beta content", 0.8).unwrap();
 
-    let filter = NodeFilter::new()
-        .prop_condition("content", PropOp::Equals("alpha content".into()));
+    let filter =
+        NodeFilter::new().prop_condition("content", PropOp::Equals("alpha content".into()));
     let results = g.find_nodes(&filter).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].label, "Alpha");
@@ -2099,9 +2304,7 @@ fn test_filter_or_composition() {
 
     let filter = NodeFilter::new()
         .node_type(NodeType::Claim)
-        .or(vec![
-            NodeFilter::new().node_type(NodeType::Entity),
-        ]);
+        .or(vec![NodeFilter::new().node_type(NodeType::Entity)]);
     let results = g.find_nodes(&filter).unwrap();
     assert_eq!(results.len(), 2); // Claim + Entity, not Goal
 }
@@ -2115,7 +2318,10 @@ fn test_on_change_node_added() {
     let events_clone = events.clone();
 
     g.on_change(move |event| {
-        events_clone.lock().unwrap().push(format!("{:?}", std::mem::discriminant(event)));
+        events_clone
+            .lock()
+            .unwrap()
+            .push(format!("{:?}", std::mem::discriminant(event)));
     });
 
     g.add_claim("Test", "content", 0.9).unwrap();
@@ -2221,13 +2427,14 @@ fn test_validated_batch_fails_on_missing_node() {
     let g = mem_graph();
     let fake_uid = Uid::new();
 
-    let ops = vec![
-        GraphOp::AddEdge(Box::new(CreateEdge::new(
-            fake_uid.clone(),
-            Uid::new(),
-            EdgeProps::Supports { strength: None, support_type: None },
-        ))),
-    ];
+    let ops = vec![GraphOp::AddEdge(Box::new(CreateEdge::new(
+        fake_uid.clone(),
+        Uid::new(),
+        EdgeProps::Supports {
+            strength: None,
+            support_type: None,
+        },
+    )))];
 
     let result = g.validate_batch(ops);
     assert!(result.is_err());
@@ -2242,14 +2449,19 @@ fn test_validated_batch_fails_on_missing_node() {
 fn test_display_graph_event() {
     let g = mem_graph();
     let node = g.add_claim("Test claim", "content", 0.9).unwrap();
-    let event = GraphEvent::NodeAdded { node: Box::new(node.clone()), changed_by: "system".into() };
+    let event = GraphEvent::NodeAdded {
+        node: Box::new(node.clone()),
+        changed_by: "system".into(),
+    };
     let s = format!("{}", event);
     assert!(s.starts_with("NodeAdded("));
     assert!(s.contains("Test claim"));
 
     let event2 = GraphEvent::NodeUpdated {
-        uid: node.uid.clone(), version: 2,
-        node_type: NodeType::Claim, layer: Layer::Epistemic,
+        uid: node.uid.clone(),
+        version: 2,
+        node_type: NodeType::Claim,
+        layer: Layer::Epistemic,
         changed_by: "test".into(),
     };
     let s2 = format!("{}", event2);
@@ -2258,15 +2470,21 @@ fn test_display_graph_event() {
 
     let event3 = GraphEvent::NodeTombstoned {
         uid: node.uid.clone(),
-        node_type: NodeType::Claim, layer: Layer::Epistemic,
+        node_type: NodeType::Claim,
+        layer: Layer::Epistemic,
         changed_by: "test".into(),
     };
     let s3 = format!("{}", event3);
     assert!(s3.starts_with("NodeTombstoned("));
 
     let edge = g.add_claim("B", "b", 0.8).unwrap();
-    let e = g.add_link(&node.uid, &edge.uid, EdgeType::Supports).unwrap();
-    let event4 = GraphEvent::EdgeAdded { edge: Box::new(e.clone()), changed_by: "system".into() };
+    let e = g
+        .add_link(&node.uid, &edge.uid, EdgeType::Supports)
+        .unwrap();
+    let event4 = GraphEvent::EdgeAdded {
+        edge: Box::new(e.clone()),
+        changed_by: "system".into(),
+    };
     let s4 = format!("{}", event4);
     assert!(s4.starts_with("EdgeAdded("));
     assert!(s4.contains("SUPPORTS"));
@@ -2296,7 +2514,10 @@ fn test_display_graph_stats() {
 
 #[test]
 fn test_display_decay_result() {
-    let result = DecayResult { nodes_decayed: 10, below_threshold: 2 };
+    let result = DecayResult {
+        nodes_decayed: 10,
+        below_threshold: 2,
+    };
     let s = format!("{}", result);
     assert_eq!(s, "DecayResult { decayed: 10, below_threshold: 2 }");
 }
@@ -2304,7 +2525,10 @@ fn test_display_decay_result() {
 #[test]
 fn test_display_batch_result() {
     let result = BatchResult {
-        nodes_added: 3, edges_added: 2, nodes_tombstoned: 1, edges_tombstoned: 0,
+        nodes_added: 3,
+        edges_added: 2,
+        nodes_tombstoned: 1,
+        edges_tombstoned: 0,
     };
     let s = format!("{}", result);
     assert_eq!(s, "BatchResult { +3 nodes, +2 edges, -1 nodes, -0 edges }");
@@ -2344,7 +2568,9 @@ fn test_find_nodes_multi_type() {
     g.add_entity("Entity B", "person").unwrap();
     g.add_goal("Goal C", "high").unwrap();
 
-    let results = g.find_nodes(&NodeFilter::new().node_types(vec![NodeType::Claim, NodeType::Entity])).unwrap();
+    let results = g
+        .find_nodes(&NodeFilter::new().node_types(vec![NodeType::Claim, NodeType::Entity]))
+        .unwrap();
     assert_eq!(results.len(), 2);
     let types: Vec<NodeType> = results.iter().map(|n| n.node_type.clone()).collect();
     assert!(types.contains(&NodeType::Claim));
@@ -2358,7 +2584,9 @@ fn test_find_nodes_multi_type_with_single_still_works() {
     g.add_entity("Entity B", "person").unwrap();
 
     // Single node_type still works
-    let results = g.find_nodes(&NodeFilter::new().node_type(NodeType::Claim)).unwrap();
+    let results = g
+        .find_nodes(&NodeFilter::new().node_type(NodeType::Claim))
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].node_type, NodeType::Claim);
 
@@ -2407,16 +2635,22 @@ fn test_validate_batch_cross_reference() {
 
     let ops = vec![
         GraphOp::AddNode(Box::new(
-            CreateNode::new("Cross-ref node", NodeProps::Claim(ClaimProps {
-                content: "test".into(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                "Cross-ref node",
+                NodeProps::Claim(ClaimProps {
+                    content: "test".into(),
+                    ..Default::default()
+                }),
+            )
             .with_uid(node_uid.clone()),
         )),
         GraphOp::AddEdge(Box::new(CreateEdge::new(
             node_uid.clone(),
             node_uid.clone(), // self-referencing for simplicity
-            EdgeProps::Supports { strength: None, support_type: None },
+            EdgeProps::Supports {
+                strength: None,
+                support_type: None,
+            },
         ))),
     ];
 
@@ -2435,13 +2669,18 @@ fn test_validate_batch_cross_reference() {
 fn test_create_node_with_uid() {
     let g = mem_graph();
     let uid = Uid::new();
-    let node = g.add_node(
-        CreateNode::new("Pre-UID node", NodeProps::Entity(EntityProps {
-            entity_type: "test".into(),
-            ..Default::default()
-        }))
-        .with_uid(uid.clone()),
-    ).unwrap();
+    let node = g
+        .add_node(
+            CreateNode::new(
+                "Pre-UID node",
+                NodeProps::Entity(EntityProps {
+                    entity_type: "test".into(),
+                    ..Default::default()
+                }),
+            )
+            .with_uid(uid.clone()),
+        )
+        .unwrap();
 
     assert_eq!(node.uid, uid);
     let fetched = g.get_node(&uid).unwrap().unwrap();
@@ -2462,7 +2701,9 @@ fn test_add_session() {
 #[test]
 fn test_add_preference() {
     let g = mem_graph();
-    let node = g.add_preference("Dark mode preference", "theme", "dark").unwrap();
+    let node = g
+        .add_preference("Dark mode preference", "theme", "dark")
+        .unwrap();
     assert_eq!(node.node_type, NodeType::Preference);
     assert_eq!(node.layer, Layer::Memory);
     match &node.props {
@@ -2477,7 +2718,9 @@ fn test_add_preference() {
 #[test]
 fn test_add_summary() {
     let g = mem_graph();
-    let node = g.add_summary("Session summary", "Discussed architecture decisions").unwrap();
+    let node = g
+        .add_summary("Session summary", "Discussed architecture decisions")
+        .unwrap();
     assert_eq!(node.node_type, NodeType::Summary);
     assert_eq!(node.layer, Layer::Memory);
     assert_eq!(node.summary, "Discussed architecture decisions");
@@ -2493,7 +2736,9 @@ fn test_semantic_search_enough_results_with_tombstoned() {
     // Create 10 nodes with embeddings
     let mut uids = Vec::new();
     for i in 0..10 {
-        let node = g.add_claim(&format!("Claim {}", i), &format!("content {}", i), 0.9).unwrap();
+        let node = g
+            .add_claim(&format!("Claim {}", i), &format!("content {}", i), 0.9)
+            .unwrap();
         let emb = vec![i as f32 * 0.1, 0.5, 0.5];
         g.set_embedding(&node.uid, &emb).unwrap();
         uids.push(node.uid);
@@ -2518,7 +2763,9 @@ fn test_semantic_search_enough_results_with_tombstoned() {
 
 struct TestEmbedder;
 impl EmbeddingProvider for TestEmbedder {
-    fn dimension(&self) -> usize { 3 }
+    fn dimension(&self) -> usize {
+        3
+    }
     fn embed(&self, text: &str) -> mindgraph::Result<Vec<f32>> {
         Ok(vec![text.len() as f32 * 0.01, 0.5, 0.5])
     }
@@ -2533,7 +2780,9 @@ fn test_embed_nodes_batch() {
     let c2 = g.add_claim("Beta", "second", 0.8).unwrap();
 
     let provider = TestEmbedder;
-    let count = g.embed_nodes(&[c1.uid.clone(), c2.uid.clone()], &provider).unwrap();
+    let count = g
+        .embed_nodes(&[c1.uid.clone(), c2.uid.clone()], &provider)
+        .unwrap();
     assert_eq!(count, 2);
 
     // Verify embeddings were stored
@@ -2553,7 +2802,9 @@ fn test_embed_nodes_skips_tombstoned() {
     g.tombstone(&c2.uid, "done", "test").unwrap();
 
     let provider = TestEmbedder;
-    let count = g.embed_nodes(&[c1.uid.clone(), c2.uid.clone()], &provider).unwrap();
+    let count = g
+        .embed_nodes(&[c1.uid.clone(), c2.uid.clone()], &provider)
+        .unwrap();
     assert_eq!(count, 1); // Only the live node
 }
 
@@ -2619,11 +2870,15 @@ fn test_get_edge_between() {
     assert_eq!(edges[0].uid, edge.uid);
 
     // Find edge with matching type filter
-    let edges = g.get_edge_between(&n1.uid, &n2.uid, Some(EdgeType::RelevantTo)).unwrap();
+    let edges = g
+        .get_edge_between(&n1.uid, &n2.uid, Some(EdgeType::RelevantTo))
+        .unwrap();
     assert_eq!(edges.len(), 1);
 
     // Find edge with non-matching type filter
-    let edges = g.get_edge_between(&n1.uid, &n2.uid, Some(EdgeType::Supports)).unwrap();
+    let edges = g
+        .get_edge_between(&n1.uid, &n2.uid, Some(EdgeType::Supports))
+        .unwrap();
     assert!(edges.is_empty());
 
     // Direction matters
@@ -2651,11 +2906,21 @@ fn test_list_nodes() {
     assert!(!page.has_more);
 
     // Paginate
-    let page = g.list_nodes(Pagination { limit: 2, offset: 0 }).unwrap();
+    let page = g
+        .list_nodes(Pagination {
+            limit: 2,
+            offset: 0,
+        })
+        .unwrap();
     assert_eq!(page.items.len(), 2);
     assert!(page.has_more);
 
-    let page = g.list_nodes(Pagination { limit: 2, offset: 2 }).unwrap();
+    let page = g
+        .list_nodes(Pagination {
+            limit: 2,
+            offset: 2,
+        })
+        .unwrap();
     assert_eq!(page.items.len(), 1);
     assert!(!page.has_more);
 }
@@ -2695,29 +2960,42 @@ fn test_display_impls() {
 
     let mut s = String::new();
 
-    let pr = PurgeResult { nodes_purged: 1, edges_purged: 2, versions_purged: 3 };
+    let pr = PurgeResult {
+        nodes_purged: 1,
+        edges_purged: 2,
+        versions_purged: 3,
+    };
     write!(s, "{}", pr).unwrap();
     assert!(s.contains("nodes: 1"));
     s.clear();
 
-    let mr = MergeResult { edges_retargeted: 4, aliases_merged: 5 };
+    let mr = MergeResult {
+        edges_retargeted: 4,
+        aliases_merged: 5,
+    };
     write!(s, "{}", mr).unwrap();
     assert!(s.contains("4"));
     s.clear();
 
-    let ir = ImportResult { relations_imported: 6 };
+    let ir = ImportResult {
+        relations_imported: 6,
+    };
     write!(s, "{}", ir).unwrap();
     assert!(s.contains("6"));
     s.clear();
 
-    let tr = TombstoneResult { edges_tombstoned: 7 };
+    let tr = TombstoneResult {
+        edges_tombstoned: 7,
+    };
     write!(s, "{}", tr).unwrap();
     assert!(s.contains("7"));
     s.clear();
 
     let tir = TypedImportResult {
-        nodes_imported: 1, edges_imported: 2,
-        nodes_skipped: 3, edges_skipped: 4,
+        nodes_imported: 1,
+        edges_imported: 2,
+        nodes_skipped: 3,
+        edges_skipped: 4,
         embeddings_imported: 5,
     };
     write!(s, "{}", tir).unwrap();
@@ -2728,7 +3006,7 @@ fn test_display_impls() {
 
 #[test]
 fn test_custom_node_type() {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct CodeSnippet {
@@ -2737,15 +3015,24 @@ fn test_custom_node_type() {
     }
 
     impl CustomNodeType for CodeSnippet {
-        fn type_name() -> &'static str { "CodeSnippet" }
-        fn layer() -> Layer { Layer::Reality }
+        fn type_name() -> &'static str {
+            "CodeSnippet"
+        }
+        fn layer() -> Layer {
+            Layer::Reality
+        }
     }
 
     let g = mem_graph();
-    let node = g.add_custom_node("hello.rs", CodeSnippet {
-        language: "rust".into(),
-        code: "fn main() {}".into(),
-    }).unwrap();
+    let node = g
+        .add_custom_node(
+            "hello.rs",
+            CodeSnippet {
+                language: "rust".into(),
+                code: "fn main() {}".into(),
+            },
+        )
+        .unwrap();
 
     assert_eq!(node.node_type, NodeType::Custom("CodeSnippet".into()));
     assert_eq!(node.layer, Layer::Reality);
@@ -2765,7 +3052,7 @@ fn test_custom_node_type() {
 
 #[test]
 fn test_custom_node_type_different_layer() {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct AgentState {
@@ -2773,14 +3060,23 @@ fn test_custom_node_type_different_layer() {
     }
 
     impl CustomNodeType for AgentState {
-        fn type_name() -> &'static str { "AgentState" }
-        fn layer() -> Layer { Layer::Agent }
+        fn type_name() -> &'static str {
+            "AgentState"
+        }
+        fn layer() -> Layer {
+            Layer::Agent
+        }
     }
 
     let g = mem_graph();
-    let node = g.add_custom_node("happy-bot", AgentState {
-        mood: "happy".into(),
-    }).unwrap();
+    let node = g
+        .add_custom_node(
+            "happy-bot",
+            AgentState {
+                mood: "happy".into(),
+            },
+        )
+        .unwrap();
 
     assert_eq!(node.layer, Layer::Agent);
     assert_eq!(node.node_type, NodeType::Custom("AgentState".into()));
@@ -2792,13 +3088,16 @@ fn test_custom_edge_type() {
     let a = g.add_entity("A", "test").unwrap();
     let b = g.add_entity("B", "test").unwrap();
 
-    let edge = g.add_edge(CreateEdge::new(
-        a.uid.clone(), b.uid.clone(),
-        EdgeProps::Custom {
-            type_name: "SIMILAR_TO".into(),
-            data: serde_json::json!({"score": 0.95}),
-        },
-    )).unwrap();
+    let edge = g
+        .add_edge(CreateEdge::new(
+            a.uid.clone(),
+            b.uid.clone(),
+            EdgeProps::Custom {
+                type_name: "SIMILAR_TO".into(),
+                data: serde_json::json!({"score": 0.95}),
+            },
+        ))
+        .unwrap();
 
     assert_eq!(edge.edge_type, EdgeType::Custom("SIMILAR_TO".into()));
     assert!(edge.edge_type.is_custom());
@@ -2890,30 +3189,45 @@ fn test_event_kind() {
     let g = mem_graph();
     let node = g.add_entity("A", "test").unwrap();
     let b = g.add_entity("B", "test").unwrap();
-    let edge = g.add_edge(CreateEdge::new(
-        node.uid.clone(), b.uid.clone(),
-        EdgeProps::Supports { strength: None, support_type: None },
-    )).unwrap();
+    let edge = g
+        .add_edge(CreateEdge::new(
+            node.uid.clone(),
+            b.uid.clone(),
+            EdgeProps::Supports {
+                strength: None,
+                support_type: None,
+            },
+        ))
+        .unwrap();
 
     // Test GraphEvent::kind()
-    let event = GraphEvent::NodeAdded { node: Box::new(node.clone()), changed_by: "system".into() };
+    let event = GraphEvent::NodeAdded {
+        node: Box::new(node.clone()),
+        changed_by: "system".into(),
+    };
     assert_eq!(event.kind(), EventKind::NodeAdded);
 
     let event = GraphEvent::NodeUpdated {
-        uid: node.uid.clone(), version: 2,
-        node_type: NodeType::Entity, layer: Layer::Reality,
+        uid: node.uid.clone(),
+        version: 2,
+        node_type: NodeType::Entity,
+        layer: Layer::Reality,
         changed_by: "test".into(),
     };
     assert_eq!(event.kind(), EventKind::NodeUpdated);
 
     let event = GraphEvent::NodeTombstoned {
         uid: node.uid.clone(),
-        node_type: NodeType::Entity, layer: Layer::Reality,
+        node_type: NodeType::Entity,
+        layer: Layer::Reality,
         changed_by: "test".into(),
     };
     assert_eq!(event.kind(), EventKind::NodeTombstoned);
 
-    let event = GraphEvent::EdgeAdded { edge: Box::new(edge.clone()), changed_by: "system".into() };
+    let event = GraphEvent::EdgeAdded {
+        edge: Box::new(edge.clone()),
+        changed_by: "system".into(),
+    };
     assert_eq!(event.kind(), EventKind::EdgeAdded);
 
     let event = GraphEvent::EdgeTombstoned {
@@ -3017,15 +3331,29 @@ fn test_agent_handle_convenience_constructors() {
 fn test_nodes_by_agent_public() {
     let g = mem_graph();
     // Use add_node_as directly
-    g.add_node_as(CreateNode::new("N1", NodeProps::Entity(EntityProps {
-        entity_type: "test".into(),
-        ..Default::default()
-    })), "agent-a").unwrap();
+    g.add_node_as(
+        CreateNode::new(
+            "N1",
+            NodeProps::Entity(EntityProps {
+                entity_type: "test".into(),
+                ..Default::default()
+            }),
+        ),
+        "agent-a",
+    )
+    .unwrap();
 
-    g.add_node_as(CreateNode::new("N2", NodeProps::Entity(EntityProps {
-        entity_type: "test".into(),
-        ..Default::default()
-    })), "agent-b").unwrap();
+    g.add_node_as(
+        CreateNode::new(
+            "N2",
+            NodeProps::Entity(EntityProps {
+                entity_type: "test".into(),
+                ..Default::default()
+            }),
+        ),
+        "agent-b",
+    )
+    .unwrap();
 
     let a_nodes = g.nodes_by_agent("agent-a").unwrap();
     assert_eq!(a_nodes.len(), 1);
@@ -3067,12 +3395,9 @@ fn test_event_filter_by_agent() {
     let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let r = received.clone();
 
-    g.on_change_filtered(
-        EventFilter::new().agent("alice"),
-        move |event| {
-            r.lock().unwrap().push(event.kind());
-        },
-    );
+    g.on_change_filtered(EventFilter::new().agent("alice"), move |event| {
+        r.lock().unwrap().push(event.kind());
+    });
 
     // This uses default agent "system"
     g.add_entity("sys node", "test").unwrap();
@@ -3080,10 +3405,17 @@ fn test_event_filter_by_agent() {
     // This uses agent "alice"
     let g_arc = std::sync::Arc::new(mem_graph());
     // Actually, let's use the same graph with add_node_as
-    g.add_node_as(CreateNode::new("alice node", NodeProps::Entity(EntityProps {
-        entity_type: "test".into(),
-        ..Default::default()
-    })), "alice").unwrap();
+    g.add_node_as(
+        CreateNode::new(
+            "alice node",
+            NodeProps::Entity(EntityProps {
+                entity_type: "test".into(),
+                ..Default::default()
+            }),
+        ),
+        "alice",
+    )
+    .unwrap();
 
     let events = received.lock().unwrap();
     // Only alice's node should trigger
@@ -3129,7 +3461,10 @@ fn test_node_updated_event_carries_type_info() {
     g.update(&claim.uid).label("Updated Claim").apply().unwrap();
 
     // Update the entity - should NOT pass the filter
-    g.update(&entity.uid).label("Updated Entity").apply().unwrap();
+    g.update(&entity.uid)
+        .label("Updated Entity")
+        .apply()
+        .unwrap();
 
     // Tombstone the claim - should pass the filter
     g.tombstone(&claim.uid, "done", "test").unwrap();
@@ -3175,7 +3510,9 @@ fn test_agent_handle_edge_operations() {
     assert_eq!(between.len(), 1);
 
     // update_edge
-    let updated = agent.update_edge(&edge.uid, None, Some(0.8), None, "weight change").unwrap();
+    let updated = agent
+        .update_edge(&edge.uid, None, Some(0.8), None, "weight change")
+        .unwrap();
     assert_eq!(updated.weight, 0.8);
     let history = g.edge_history(&edge.uid).unwrap();
     assert_eq!(history.last().unwrap().changed_by, "edge-agent");
@@ -3198,12 +3535,17 @@ fn test_agent_handle_traversal() {
     let neighbors = agent.neighborhood(&a.uid, 2).unwrap();
     assert!(!neighbors.is_empty());
 
-    let reachable = agent.reachable(&a.uid, &TraversalOptions {
-        direction: Direction::Both,
-        edge_types: None,
-        max_depth: 2,
-        weight_threshold: None,
-    }).unwrap();
+    let reachable = agent
+        .reachable(
+            &a.uid,
+            &TraversalOptions {
+                direction: Direction::Both,
+                edge_types: None,
+                max_depth: 2,
+                weight_threshold: None,
+            },
+        )
+        .unwrap();
     assert!(!reachable.is_empty());
 }
 
@@ -3231,16 +3573,22 @@ fn test_agent_handle_memory_constructors() {
     let g = std::sync::Arc::new(mem_graph());
     let agent = g.agent("memory-agent");
 
-    let obs = agent.add_observation("saw something", "details here").unwrap();
+    let obs = agent
+        .add_observation("saw something", "details here")
+        .unwrap();
     assert_eq!(obs.node_type, NodeType::Observation);
 
     let session = agent.add_session("meeting", "discuss things").unwrap();
     assert_eq!(session.node_type, NodeType::Session);
 
-    let pref = agent.add_preference("font pref", "font", "monospace").unwrap();
+    let pref = agent
+        .add_preference("font pref", "font", "monospace")
+        .unwrap();
     assert_eq!(pref.node_type, NodeType::Preference);
 
-    let summary = agent.add_summary("daily summary", "things happened").unwrap();
+    let summary = agent
+        .add_summary("daily summary", "things happened")
+        .unwrap();
     assert_eq!(summary.node_type, NodeType::Summary);
 
     // All should be attributed to memory-agent
@@ -3250,22 +3598,34 @@ fn test_agent_handle_memory_constructors() {
 
 #[test]
 fn test_custom_props_returns_result() {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    struct MyType { val: i32 }
+    struct MyType {
+        val: i32,
+    }
 
     impl CustomNodeType for MyType {
-        fn type_name() -> &'static str { "MyType" }
-        fn layer() -> Layer { Layer::Reality }
+        fn type_name() -> &'static str {
+            "MyType"
+        }
+        fn layer() -> Layer {
+            Layer::Reality
+        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    struct OtherType { val: String }
+    struct OtherType {
+        val: String,
+    }
 
     impl CustomNodeType for OtherType {
-        fn type_name() -> &'static str { "OtherType" }
-        fn layer() -> Layer { Layer::Reality }
+        fn type_name() -> &'static str {
+            "OtherType"
+        }
+        fn layer() -> Layer {
+            Layer::Reality
+        }
     }
 
     let g = mem_graph();

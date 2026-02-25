@@ -30,7 +30,10 @@ impl GraphNode {
     /// Returns `Ok(None)` if this node is not a `Custom` type or the type name doesn't match.
     /// Returns `Err` if deserialization fails.
     pub fn custom_props<T: CustomNodeType>(&self) -> crate::Result<Option<T>> {
-        if let NodeProps::Custom { type_name, data, .. } = &self.props {
+        if let NodeProps::Custom {
+            type_name, data, ..
+        } = &self.props
+        {
             if type_name == T::type_name() {
                 let val = serde_json::from_value(data.clone())?;
                 return Ok(Some(val));

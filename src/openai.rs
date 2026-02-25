@@ -61,9 +61,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             .send_json(&body)
             .map_err(|e| Error::Http(e.to_string()))?;
 
-        let json: serde_json::Value = resp
-            .into_json()
-            .map_err(|e| Error::Http(e.to_string()))?;
+        let json: serde_json::Value = resp.into_json().map_err(|e| Error::Http(e.to_string()))?;
 
         let embedding = json["data"][0]["embedding"]
             .as_array()
@@ -89,9 +87,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             .send_json(&body)
             .map_err(|e| Error::Http(e.to_string()))?;
 
-        let json: serde_json::Value = resp
-            .into_json()
-            .map_err(|e| Error::Http(e.to_string()))?;
+        let json: serde_json::Value = resp.into_json().map_err(|e| Error::Http(e.to_string()))?;
 
         let data = json["data"]
             .as_array()

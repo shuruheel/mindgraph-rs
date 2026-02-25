@@ -39,8 +39,16 @@ pub struct AgentHandle {
 }
 
 impl AgentHandle {
-    pub(crate) fn new(graph: Arc<MindGraph>, agent_id: String, parent_agent: Option<String>) -> Self {
-        Self { graph, agent_id, parent_agent }
+    pub(crate) fn new(
+        graph: Arc<MindGraph>,
+        agent_id: String,
+        parent_agent: Option<String>,
+    ) -> Self {
+        Self {
+            graph,
+            agent_id,
+            parent_agent,
+        }
     }
 
     /// Get the agent identity.
@@ -111,7 +119,16 @@ impl AgentHandle {
         props: Option<NodeProps>,
         reason: &str,
     ) -> Result<GraphNode> {
-        self.graph.update_node(uid, label, summary, confidence, salience, props, &self.agent_id, reason)
+        self.graph.update_node(
+            uid,
+            label,
+            summary,
+            confidence,
+            salience,
+            props,
+            &self.agent_id,
+            reason,
+        )
     }
 
     /// Update an edge, recording this agent.
@@ -123,7 +140,8 @@ impl AgentHandle {
         props: Option<EdgeProps>,
         reason: &str,
     ) -> Result<GraphEdge> {
-        self.graph.update_edge_as(uid, confidence, weight, props, &self.agent_id, reason)
+        self.graph
+            .update_edge_as(uid, confidence, weight, props, &self.agent_id, reason)
     }
 
     // ---- Read methods (delegate directly) ----
@@ -227,10 +245,13 @@ impl AgentHandle {
     pub fn add_claim(&self, label: &str, content: &str, confidence: f64) -> Result<GraphNode> {
         use crate::schema::props::epistemic::ClaimProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Claim(ClaimProps {
-                content: content.to_string(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Claim(ClaimProps {
+                    content: content.to_string(),
+                    ..Default::default()
+                }),
+            )
             .confidence(Confidence::new(confidence)?),
         )
     }
@@ -238,30 +259,39 @@ impl AgentHandle {
     /// Add an entity node.
     pub fn add_entity(&self, label: &str, entity_type: &str) -> Result<GraphNode> {
         use crate::schema::props::reality::EntityProps;
-        self.add_node(CreateNode::new(label, NodeProps::Entity(EntityProps {
-            entity_type: entity_type.to_string(),
-            ..Default::default()
-        })))
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Entity(EntityProps {
+                entity_type: entity_type.to_string(),
+                ..Default::default()
+            }),
+        ))
     }
 
     /// Add a goal node.
     pub fn add_goal(&self, label: &str, priority: &str) -> Result<GraphNode> {
         use crate::schema::props::intent::GoalProps;
-        self.add_node(CreateNode::new(label, NodeProps::Goal(GoalProps {
-            priority: Some(priority.to_string()),
-            status: Some("active".to_string()),
-            ..Default::default()
-        })))
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Goal(GoalProps {
+                priority: Some(priority.to_string()),
+                status: Some("active".to_string()),
+                ..Default::default()
+            }),
+        ))
     }
 
     /// Add an observation node.
     pub fn add_observation(&self, label: &str, description: &str) -> Result<GraphNode> {
         use crate::schema::props::reality::ObservationProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Observation(ObservationProps {
-                content: description.to_string(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Observation(ObservationProps {
+                    content: description.to_string(),
+                    ..Default::default()
+                }),
+            )
             .summary(description),
         )
     }
@@ -270,10 +300,13 @@ impl AgentHandle {
     pub fn add_session(&self, label: &str, focus: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::SessionProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Session(SessionProps {
-                focus_summary: Some(focus.to_string()),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Session(SessionProps {
+                    focus_summary: Some(focus.to_string()),
+                    ..Default::default()
+                }),
+            )
             .summary(focus),
         )
     }
@@ -281,23 +314,27 @@ impl AgentHandle {
     /// Add a preference node.
     pub fn add_preference(&self, label: &str, key: &str, value: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::PreferenceProps;
-        self.add_node(
-            CreateNode::new(label, NodeProps::Preference(PreferenceProps {
+        self.add_node(CreateNode::new(
+            label,
+            NodeProps::Preference(PreferenceProps {
                 key: key.to_string(),
                 value: value.to_string(),
                 ..Default::default()
-            })),
-        )
+            }),
+        ))
     }
 
     /// Add a summary node.
     pub fn add_summary(&self, label: &str, content: &str) -> Result<GraphNode> {
         use crate::schema::props::memory::SummaryProps;
         self.add_node(
-            CreateNode::new(label, NodeProps::Summary(SummaryProps {
-                content: content.to_string(),
-                ..Default::default()
-            }))
+            CreateNode::new(
+                label,
+                NodeProps::Summary(SummaryProps {
+                    content: content.to_string(),
+                    ..Default::default()
+                }),
+            )
             .summary(content),
         )
     }
@@ -337,6 +374,7 @@ impl AgentHandle {
     /// Create an async event stream filtered to events triggered by this agent.
     #[cfg(feature = "async")]
     pub fn watch_mine(&self) -> crate::watch::WatchStream {
-        self.graph.watch(crate::events::EventFilter::new().agent(self.agent_id.clone()))
+        self.graph
+            .watch(crate::events::EventFilter::new().agent(self.agent_id.clone()))
     }
 }

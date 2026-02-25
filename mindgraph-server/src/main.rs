@@ -1079,11 +1079,8 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(state, auth_middleware))
 }
 
 #[tokio::main]

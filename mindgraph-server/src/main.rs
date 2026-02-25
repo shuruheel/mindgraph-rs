@@ -60,8 +60,6 @@ async fn auth_middleware(
     request: Request,
     next: Next,
 ) -> impl IntoResponse {
-    // token is passed via closure capture in main(), not via State extractor.
-    // This avoids breaking path param extraction in Axum 0.7 handlers.
     if request.uri().path() == "/health" {
         return next.run(request).await.into_response();
     }
@@ -1038,8 +1036,6 @@ async fn purge(
 // ---- Router & Main ----
 
 fn app(state: Arc<AppState>) -> Router {
-    // IMPORTANT: In Axum 0.7, .layer() must be applied BEFORE .with_state() to preserve
-    // path parameter extraction. Applying .layer() after .with_state() breaks {uid} routing.
     let token = state.token.clone();
     Router::new()
         .route("/health", get(health))
@@ -1083,7 +1079,6 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
-        // Apply auth middleware BEFORE with_state to preserve path param extraction in Axum 0.7
         .layer(middleware::from_fn(move |headers: HeaderMap, req: Request, next: Next| {
             let token = token.clone();
             auth_middleware(token, headers, req, next)
@@ -1129,7 +1124,6 @@ async fn main() {
         .expect("failed to bind");
     tracing::info!("mindgraph-server listening on {bind_addr}:{port}");
 
-    // Auth middleware is applied inside app() before with_state() to preserve Axum 0.7 path params.
     let router = app(state);
 
     axum::serve(listener, router)

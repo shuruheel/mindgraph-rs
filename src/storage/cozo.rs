@@ -2057,22 +2057,13 @@ impl CozoStorage {
     /// Used when reconfiguring to a different dimension.
     pub fn drop_embedding_schema(&self) -> Result<()> {
         // Drop HNSW index first (ignore errors if not exists)
-        let _ = self.run_script(
-            "::hnsw drop node_embedding:semantic_idx",
-            BTreeMap::new(),
-        );
+        let _ = self.run_script("::hnsw drop node_embedding:semantic_idx", BTreeMap::new());
         // Drop the relation (ignore errors if not exists)
-        let _ = self.run_script(
-            "::remove node_embedding",
-            BTreeMap::new(),
-        );
+        let _ = self.run_script("::remove node_embedding", BTreeMap::new());
         // Clear the dimension metadata
         let mut params = BTreeMap::new();
         params.insert("key".into(), str_val("embedding_dimension"));
-        let _ = self.run_script(
-            r#"?[key] <- [[$key]] :rm mg_meta { key }"#,
-            params,
-        );
+        let _ = self.run_script(r#"?[key] <- [[$key]] :rm mg_meta { key }"#, params);
         Ok(())
     }
 

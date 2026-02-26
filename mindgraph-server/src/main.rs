@@ -1270,7 +1270,7 @@ async fn embedding_search_text(
     State(_state): State<Arc<AppState>>,
     Json(_req): Json<EmbeddingSearchTextRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    Err((
+    Err::<(), _>((
         StatusCode::NOT_IMPLEMENTED,
         Json(ErrorResponse {
             error: "text-based embedding search requires a configured embedding provider; \

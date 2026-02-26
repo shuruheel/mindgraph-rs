@@ -155,7 +155,9 @@ fn to_screaming_snake(s: &str) -> String {
             // Don't double-insert underscore if previous char was already uppercase
             // e.g. "FTSIndex" → "FTS_INDEX" not "F_T_S_INDEX"
             let prev = s.chars().nth(i - 1).unwrap_or('a');
-            if prev.is_lowercase() || (prev.is_uppercase() && s.chars().nth(i + 1).map_or(false, |c| c.is_lowercase())) {
+            if prev.is_lowercase()
+                || (prev.is_uppercase() && s.chars().nth(i + 1).map_or(false, |c| c.is_lowercase()))
+            {
                 result.push('_');
             }
         }
@@ -820,10 +822,7 @@ async fn get_edges(
                 .await
                 .map_err(map_err_500)?;
             let to_uid = Uid::from(to.as_str());
-            let filtered: Vec<_> = edges
-                .into_iter()
-                .filter(|e| e.to_uid == to_uid)
-                .collect();
+            let filtered: Vec<_> = edges.into_iter().filter(|e| e.to_uid == to_uid).collect();
             Ok(Json(serde_json::to_value(filtered).unwrap()))
         }
         (None, None) => Err(bad_request("either from_uid or to_uid is required")),
@@ -913,9 +912,9 @@ async fn get_neighborhood(
     };
 
     // Parse edge types if provided
-    let edge_types = q.edge_types.map(|types| {
-        types.iter().map(|t| parse_edge_type(t)).collect()
-    });
+    let edge_types = q
+        .edge_types
+        .map(|types| types.iter().map(|t| parse_edge_type(t)).collect());
 
     let opts = TraversalOptions {
         direction,
@@ -1392,10 +1391,7 @@ async fn batch_ops(
             .await
         {
             Ok(_) => edges_added += 1,
-            Err(e) => errors.push(format!(
-                "edge {} → {}: {}",
-                item.from_uid, item.to_uid, e
-            )),
+            Err(e) => errors.push(format!("edge {} → {}: {}", item.from_uid, item.to_uid, e)),
         }
     }
 
@@ -1489,9 +1485,9 @@ async fn get_subgraph(
     if req.start_uids.is_empty() {
         return Err(bad_request("start_uids must not be empty"));
     }
-    let edge_types = req.edge_types.map(|types| {
-        types.iter().map(|s| parse_edge_type(s)).collect::<Vec<_>>()
-    });
+    let edge_types = req
+        .edge_types
+        .map(|types| types.iter().map(|s| parse_edge_type(s)).collect::<Vec<_>>());
     let opts = TraversalOptions {
         max_depth: req.max_depth,
         edge_types,

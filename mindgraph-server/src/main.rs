@@ -10,7 +10,7 @@ use axum::{
 };
 use mindgraph::query::TypedSnapshot;
 use mindgraph::schema::edge_props::EdgeProps;
-use mindgraph::traversal::TraversalOptions;
+use mindgraph::traversal::{Direction, TraversalOptions};
 use mindgraph::{
     AsyncMindGraph, Confidence, CreateEdge, CreateNode, EdgeType, Layer, NodeFilter, NodeProps,
     NodeType, Salience, SearchOptions, Timestamp, Uid,
@@ -389,6 +389,20 @@ struct EdgeRequest {
 }
 
 #[derive(Deserialize)]
+struct UpdateEdgeRequest {
+    #[serde(default)]
+    confidence: Option<f64>,
+    #[serde(default)]
+    weight: Option<f64>,
+    #[serde(default)]
+    props: Option<EdgeProps>,
+    #[serde(default = "default_reason")]
+    reason: String,
+    #[serde(default = "default_agent")]
+    agent_id: String,
+}
+
+#[derive(Deserialize)]
 struct SearchRequest {
     query: String,
     #[serde(default)]
@@ -445,6 +459,10 @@ fn default_max_depth() -> u32 {
 struct NeighborhoodQuery {
     #[serde(default = "default_depth")]
     depth: u32,
+    #[serde(default)]
+    direction: Option<String>,
+    #[serde(default)]
+    edge_types: Option<Vec<String>>,
 }
 
 fn default_depth() -> u32 {
@@ -745,6 +763,31 @@ async fn add_edge(
     Ok((StatusCode::CREATED, Json(edge)))
 }
 
+async fn update_edge(
+    State(state): State<Arc<AppState>>,
+    Path(uid): Path<String>,
+    Json(req): Json<UpdateEdgeRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let conf = req
+        .confidence
+        .map(Confidence::new)
+        .transpose()
+        .map_err(map_err_500)?;
+    let edge = state
+        .graph
+        .update_edge(
+            Uid::from(uid.as_str()),
+            conf,
+            req.weight,
+            req.props,
+            req.agent_id,
+            req.reason,
+        )
+        .await
+        .map_err(map_err_500)?;
+    Ok(Json(edge))
+}
+
 async fn get_edges(
     State(state): State<Arc<AppState>>,
     Query(q): Query<EdgesQuery>,
@@ -862,9 +905,28 @@ async fn get_neighborhood(
     Path(uid): Path<String>,
     Query(q): Query<NeighborhoodQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    // Parse direction
+    let direction = match q.direction.as_deref() {
+        Some("outgoing") => Direction::Outgoing,
+        Some("incoming") => Direction::Incoming,
+        _ => Direction::Both,
+    };
+
+    // Parse edge types if provided
+    let edge_types = q.edge_types.map(|types| {
+        types.iter().map(|t| parse_edge_type(t)).collect()
+    });
+
+    let opts = TraversalOptions {
+        direction,
+        edge_types,
+        max_depth: q.depth,
+        weight_threshold: None,
+    };
+
     let steps = state
         .graph
-        .neighborhood(Uid::from(uid.as_str()), q.depth)
+        .reachable(Uid::from(uid.as_str()), opts)
         .await
         .map_err(map_err_500)?;
     Ok(Json(steps))
@@ -1111,6 +1173,13 @@ struct EmbeddingSearchRequest {
     k: u32,
 }
 
+#[derive(Deserialize)]
+struct EmbeddingSearchTextRequest {
+    text: String,
+    #[serde(default = "default_embedding_k")]
+    k: u32,
+}
+
 fn default_embedding_k() -> u32 {
     10
 }
@@ -1183,6 +1252,28 @@ async fn embedding_search(
     let results = state
         .graph
         .semantic_search(req.query, req.k as usize)
+        .await
+        .map_err(map_err_500)?;
+    // Convert Vec<(GraphNode, f64)> to a serializable format
+    let items: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(node, score)| {
+            serde_json::json!({
+                "node": node,
+                "score": score,
+            })
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+async fn embedding_search_text(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EmbeddingSearchTextRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let results = state
+        .graph
+        .semantic_search_text(&req.text, req.k as usize)
         .await
         .map_err(map_err_500)?;
     // Convert Vec<(GraphNode, f64)> to a serializable format
@@ -1371,6 +1462,13 @@ async fn get_contradictions(
     Ok(Json(contradictions))
 }
 
+async fn get_pending_approvals(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let approvals = state.graph.pending_approvals().await.map_err(map_err_500)?;
+    Ok(Json(approvals))
+}
+
 // ---- P5: Subgraph Extraction ----
 
 #[derive(Deserialize)]
@@ -1483,7 +1581,7 @@ fn app(state: Arc<AppState>) -> Router {
         // Edges
         .route("/link", post(add_link))
         .route("/edge", post(add_edge))
-        .route("/edge/{uid}", delete(delete_edge))
+        .route("/edge/{uid}", patch(update_edge).delete(delete_edge))
         .route("/edge/{uid}/history", get(get_edge_history))
         .route("/edges", get(get_edges))
         // Search & filter
@@ -1503,6 +1601,7 @@ fn app(state: Arc<AppState>) -> Router {
         // P2: Embeddings
         .route("/embeddings/configure", post(configure_embeddings))
         .route("/embeddings/search", post(embedding_search))
+        .route("/embeddings/search-text", post(embedding_search_text))
         .route(
             "/node/{uid}/embedding",
             axum::routing::put(set_embedding)
@@ -1517,6 +1616,7 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/questions", get(get_open_questions))
         .route("/claims/weak", get(get_weak_claims))
         .route("/contradictions", get(get_contradictions))
+        .route("/approvals/pending", get(get_pending_approvals))
         // P5: Subgraph extraction
         .route("/subgraph", post(get_subgraph))
         // P6: Edge-between query

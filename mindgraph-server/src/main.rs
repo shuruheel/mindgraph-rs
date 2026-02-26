@@ -1172,6 +1172,7 @@ struct EmbeddingSearchRequest {
     k: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct EmbeddingSearchTextRequest {
     text: String,
@@ -1294,6 +1295,7 @@ struct BatchNodeItem {
     props: NodeProps,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct BatchEdgeItem {
     from_uid: String,
@@ -1467,6 +1469,7 @@ struct SubgraphRequest {
     #[serde(default)]
     edge_types: Option<Vec<String>>,
     #[serde(default)]
+    #[allow(dead_code)]
     node_types: Option<Vec<String>>,
 }
 

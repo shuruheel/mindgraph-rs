@@ -142,8 +142,32 @@ fn parse_node_type(s: &str) -> NodeType {
     }
 }
 
+/// Convert PascalCase or camelCase to SCREAMING_SNAKE_CASE.
+/// Already-screaming input passes through unchanged.
+fn to_screaming_snake(s: &str) -> String {
+    // If it already contains underscores and is all-uppercase, return as-is
+    if s.contains('_') && s.chars().all(|c| !c.is_lowercase()) {
+        return s.to_string();
+    }
+    let mut result = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() && i > 0 {
+            // Don't double-insert underscore if previous char was already uppercase
+            // e.g. "FTSIndex" → "FTS_INDEX" not "F_T_S_INDEX"
+            let prev = s.chars().nth(i - 1).unwrap_or('a');
+            if prev.is_lowercase() || (prev.is_uppercase() && s.chars().nth(i + 1).map_or(false, |c| c.is_lowercase())) {
+                result.push('_');
+            }
+        }
+        result.push(ch.to_ascii_uppercase());
+    }
+    result
+}
+
 fn parse_edge_type(s: &str) -> EdgeType {
-    match s {
+    // Normalize PascalCase/camelCase → SCREAMING_SNAKE_CASE before matching
+    let normalized = to_screaming_snake(s);
+    match normalized.as_str() {
         "EXTRACTED_FROM" => EdgeType::ExtractedFrom,
         "PART_OF" => EdgeType::PartOf,
         "HAS_PART" => EdgeType::HasPart,
@@ -399,7 +423,10 @@ fn default_limit() -> u32 {
 
 #[derive(Deserialize)]
 struct EdgesQuery {
-    from_uid: String,
+    #[serde(default)]
+    from_uid: Option<String>,
+    #[serde(default)]
+    to_uid: Option<String>,
     #[serde(default)]
     edge_type: Option<String>,
 }
@@ -723,12 +750,41 @@ async fn get_edges(
     Query(q): Query<EdgesQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let et = q.edge_type.map(|s| parse_edge_type(&s));
-    let edges = state
-        .graph
-        .edges_from(Uid::from(q.from_uid.as_str()), et)
-        .await
-        .map_err(map_err_500)?;
-    Ok(Json(edges))
+
+    // P1: Support both from_uid and to_uid queries
+    match (q.from_uid, q.to_uid) {
+        (Some(from), None) => {
+            let edges = state
+                .graph
+                .edges_from(Uid::from(from.as_str()), et)
+                .await
+                .map_err(map_err_500)?;
+            Ok(Json(serde_json::to_value(edges).unwrap()))
+        }
+        (None, Some(to)) => {
+            let edges = state
+                .graph
+                .edges_to(Uid::from(to.as_str()), et)
+                .await
+                .map_err(map_err_500)?;
+            Ok(Json(serde_json::to_value(edges).unwrap()))
+        }
+        (Some(from), Some(to)) => {
+            // Return edges between two specific nodes
+            let edges = state
+                .graph
+                .edges_from(Uid::from(from.as_str()), et.clone())
+                .await
+                .map_err(map_err_500)?;
+            let to_uid = Uid::from(to.as_str());
+            let filtered: Vec<_> = edges
+                .into_iter()
+                .filter(|e| e.to_uid == to_uid)
+                .collect();
+            Ok(Json(serde_json::to_value(filtered).unwrap()))
+        }
+        (None, None) => Err(bad_request("either from_uid or to_uid is required")),
+    }
 }
 
 async fn search(
@@ -1033,6 +1089,374 @@ async fn purge(
     Ok(Json(result))
 }
 
+// ---- P2: Embedding Endpoints ----
+
+#[derive(Deserialize)]
+struct ConfigureEmbeddingsRequest {
+    dimension: usize,
+    /// If true, drop existing embedding schema and recreate with new dimension.
+    #[serde(default)]
+    force: bool,
+}
+
+#[derive(Deserialize)]
+struct SetEmbeddingRequest {
+    embedding: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingSearchRequest {
+    query: Vec<f32>,
+    #[serde(default = "default_embedding_k")]
+    k: u32,
+}
+
+fn default_embedding_k() -> u32 {
+    10
+}
+
+async fn configure_embeddings(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ConfigureEmbeddingsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    if req.force {
+        // Force reconfigure: clear existing embeddings and reset dimension
+        if let Some(existing_dim) = state.graph.embedding_dimension() {
+            if existing_dim != req.dimension {
+                // Clear all embeddings first, then reconfigure
+                state.graph.clear_embeddings().await.map_err(map_err_500)?;
+            }
+        }
+    }
+    state
+        .graph
+        .configure_embeddings(req.dimension)
+        .await
+        .map_err(map_err_500)?;
+    Ok(Json(serde_json::json!({ "dimension": req.dimension })))
+}
+
+async fn set_embedding(
+    State(state): State<Arc<AppState>>,
+    Path(uid): Path<String>,
+    Json(req): Json<SetEmbeddingRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .graph
+        .set_embedding(Uid::from(uid.as_str()), req.embedding)
+        .await
+        .map_err(map_err_500)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_embedding(
+    State(state): State<Arc<AppState>>,
+    Path(uid): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let embedding = state
+        .graph
+        .get_embedding(Uid::from(uid.as_str()))
+        .await
+        .map_err(map_err_500)?;
+    match embedding {
+        Some(vec) => Ok(Json(serde_json::json!({ "embedding": vec }))),
+        None => Err(not_found(format!("no embedding for node {uid}"))),
+    }
+}
+
+async fn delete_embedding(
+    State(state): State<Arc<AppState>>,
+    Path(uid): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .graph
+        .delete_embedding(Uid::from(uid.as_str()))
+        .await
+        .map_err(map_err_500)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn embedding_search(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EmbeddingSearchRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let results = state
+        .graph
+        .semantic_search(req.query, req.k as usize)
+        .await
+        .map_err(map_err_500)?;
+    // Convert Vec<(GraphNode, f64)> to a serializable format
+    let items: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(node, score)| {
+            serde_json::json!({
+                "node": node,
+                "score": score,
+            })
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+// ---- P3: Batch Operations ----
+
+#[derive(Deserialize)]
+struct BatchNodeItem {
+    label: String,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    confidence: Option<f64>,
+    #[serde(default)]
+    salience: Option<f64>,
+    props: NodeProps,
+}
+
+#[derive(Deserialize)]
+struct BatchEdgeItem {
+    from_uid: String,
+    to_uid: String,
+    edge_type: String,
+    #[serde(default)]
+    confidence: Option<f64>,
+    #[serde(default)]
+    weight: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct BatchRequest {
+    #[serde(default)]
+    nodes: Vec<BatchNodeItem>,
+    #[serde(default)]
+    edges: Vec<BatchEdgeItem>,
+    #[serde(default = "default_agent")]
+    agent_id: String,
+}
+
+#[derive(Serialize)]
+struct BatchResponse {
+    nodes_added: usize,
+    edges_added: usize,
+    node_uids: Vec<String>,
+    errors: Vec<String>,
+}
+
+async fn batch_ops(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BatchRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let handle = state.graph.agent(&req.agent_id);
+    let mut node_uids = Vec::new();
+    let mut errors = Vec::new();
+    let mut nodes_added = 0usize;
+    let mut edges_added = 0usize;
+
+    // Create nodes
+    for item in &req.nodes {
+        let mut builder = CreateNode::new(&item.label, item.props.clone());
+        if let Some(ref s) = item.summary {
+            builder = builder.summary(s);
+        }
+        if let Some(c) = item.confidence {
+            match Confidence::new(c) {
+                Ok(conf) => builder = builder.confidence(conf),
+                Err(e) => {
+                    errors.push(format!("node '{}': {}", item.label, e));
+                    node_uids.push(String::new());
+                    continue;
+                }
+            }
+        }
+        if let Some(s) = item.salience {
+            match Salience::new(s) {
+                Ok(sal) => builder = builder.salience(sal),
+                Err(e) => {
+                    errors.push(format!("node '{}': {}", item.label, e));
+                    node_uids.push(String::new());
+                    continue;
+                }
+            }
+        }
+        match handle.add_node(builder).await {
+            Ok(node) => {
+                node_uids.push(node.uid.to_string());
+                nodes_added += 1;
+            }
+            Err(e) => {
+                errors.push(format!("node '{}': {}", item.label, e));
+                node_uids.push(String::new());
+            }
+        }
+    }
+
+    // Create edges
+    for item in &req.edges {
+        let edge_type = parse_edge_type(&item.edge_type);
+        match handle
+            .add_link(
+                Uid::from(item.from_uid.as_str()),
+                Uid::from(item.to_uid.as_str()),
+                edge_type,
+            )
+            .await
+        {
+            Ok(_) => edges_added += 1,
+            Err(e) => errors.push(format!(
+                "edge {} → {}: {}",
+                item.from_uid, item.to_uid, e
+            )),
+        }
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(BatchResponse {
+            nodes_added,
+            edges_added,
+            node_uids,
+            errors,
+        }),
+    ))
+}
+
+// ---- P4: Epistemic Query Endpoints ----
+
+#[derive(Deserialize)]
+struct WeakClaimsQuery {
+    #[serde(default = "default_half")]
+    max_confidence: f64,
+}
+
+async fn get_goals(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let goals = state.graph.active_goals().await.map_err(map_err_500)?;
+    Ok(Json(goals))
+}
+
+async fn get_open_decisions(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let decisions = state.graph.open_decisions().await.map_err(map_err_500)?;
+    Ok(Json(decisions))
+}
+
+async fn get_open_questions(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let questions = state.graph.open_questions().await.map_err(map_err_500)?;
+    Ok(Json(questions))
+}
+
+async fn get_weak_claims(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<WeakClaimsQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let claims = state
+        .graph
+        .weak_claims(q.max_confidence)
+        .await
+        .map_err(map_err_500)?;
+    Ok(Json(claims))
+}
+
+async fn get_contradictions(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let contradictions = state
+        .graph
+        .unresolved_contradictions()
+        .await
+        .map_err(map_err_500)?;
+    Ok(Json(contradictions))
+}
+
+// ---- P5: Subgraph Extraction ----
+
+#[derive(Deserialize)]
+struct SubgraphRequest {
+    start_uids: Vec<String>,
+    #[serde(default = "default_depth")]
+    max_depth: u32,
+    #[serde(default)]
+    edge_types: Option<Vec<String>>,
+    #[serde(default)]
+    node_types: Option<Vec<String>>,
+}
+
+async fn get_subgraph(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SubgraphRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    if req.start_uids.is_empty() {
+        return Err(bad_request("start_uids must not be empty"));
+    }
+    let edge_types = req.edge_types.map(|types| {
+        types.iter().map(|s| parse_edge_type(s)).collect::<Vec<_>>()
+    });
+    let opts = TraversalOptions {
+        max_depth: req.max_depth,
+        edge_types,
+        ..Default::default()
+    };
+
+    // subgraph() takes a single start UID — collect results for all start UIDs
+    let mut all_nodes = Vec::new();
+    let mut all_edges = Vec::new();
+    let mut seen_node_uids = std::collections::HashSet::new();
+    let mut seen_edge_uids = std::collections::HashSet::new();
+
+    for uid_str in &req.start_uids {
+        let (nodes, edges) = state
+            .graph
+            .subgraph(Uid::from(uid_str.as_str()), opts.clone())
+            .await
+            .map_err(map_err_500)?;
+        for node in nodes {
+            if seen_node_uids.insert(node.uid.to_string()) {
+                all_nodes.push(node);
+            }
+        }
+        for edge in edges {
+            if seen_edge_uids.insert(edge.uid.to_string()) {
+                all_edges.push(edge);
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "nodes": all_nodes,
+        "edges": all_edges,
+    })))
+}
+
+// ---- P6: Edge-Between Query ----
+
+#[derive(Deserialize)]
+struct EdgeBetweenQuery {
+    from_uid: String,
+    to_uid: String,
+    #[serde(default)]
+    edge_type: Option<String>,
+}
+
+async fn get_edge_between(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<EdgeBetweenQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let et = q.edge_type.map(|s| parse_edge_type(&s));
+    let edges = state
+        .graph
+        .get_edge_between(
+            Uid::from(q.from_uid.as_str()),
+            Uid::from(q.to_uid.as_str()),
+            et,
+        )
+        .await
+        .map_err(map_err_500)?;
+    Ok(Json(edges))
+}
+
 // ---- Router & Main ----
 
 fn app(state: Arc<AppState>) -> Router {
@@ -1076,6 +1500,27 @@ fn app(state: Arc<AppState>) -> Router {
         .route("/alias", post(add_alias))
         .route("/aliases/{uid}", get(get_aliases))
         .route("/resolve", get(resolve_alias))
+        // P2: Embeddings
+        .route("/embeddings/configure", post(configure_embeddings))
+        .route("/embeddings/search", post(embedding_search))
+        .route(
+            "/node/{uid}/embedding",
+            axum::routing::put(set_embedding)
+                .get(get_embedding)
+                .delete(delete_embedding),
+        )
+        // P3: Batch operations
+        .route("/batch", post(batch_ops))
+        // P4: Epistemic queries
+        .route("/goals", get(get_goals))
+        .route("/decisions", get(get_open_decisions))
+        .route("/questions", get(get_open_questions))
+        .route("/claims/weak", get(get_weak_claims))
+        .route("/contradictions", get(get_contradictions))
+        // P5: Subgraph extraction
+        .route("/subgraph", post(get_subgraph))
+        // P6: Edge-between query
+        .route("/edge/between", get(get_edge_between))
         // Export/import
         .route("/export", get(export_typed))
         .route("/import", post(import_typed))

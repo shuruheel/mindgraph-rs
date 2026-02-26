@@ -735,6 +735,14 @@ impl AsyncMindGraph {
 
     // ---- v0.4: Embeddings ----
 
+    /// Async version of [`MindGraph::clear_embeddings`].
+    pub async fn clear_embeddings(&self) -> Result<()> {
+        let g = self.inner.clone();
+        tokio::task::spawn_blocking(move || g.clear_embeddings())
+            .await
+            .map_err(join_err)?
+    }
+
     /// Async version of [`MindGraph::configure_embeddings`].
     pub async fn configure_embeddings(&self, dimension: usize) -> Result<()> {
         let g = self.inner.clone();

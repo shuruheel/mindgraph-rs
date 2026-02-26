@@ -1471,6 +1471,16 @@ impl MindGraph {
 
     /// Configure embedding support with the given vector dimension.
     /// Idempotent if the same dimension is used; errors on dimension mismatch.
+    /// Drop existing embedding schema and reset dimension. Used before reconfigure.
+    pub fn clear_embeddings(&self) -> Result<()> {
+        self.storage.drop_embedding_schema()?;
+        *self
+            .embedding_dim
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        Ok(())
+    }
+
     pub fn configure_embeddings(&self, dimension: usize) -> Result<()> {
         let current = self.embedding_dimension();
         if let Some(existing) = current {

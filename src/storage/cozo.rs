@@ -1411,9 +1411,14 @@ impl CozoStorage {
         let limit = opts.limit.unwrap_or(20);
         let min_score = opts.min_score.unwrap_or(0.0);
 
+        // CozoDB FTS `k` controls retrieval breadth, not just output limit.
+        // Low k causes missed results for common terms. Use high k internally,
+        // then apply user's limit as a post-filter via :limit clause.
+        let fts_k = std::cmp::max(limit as i64, 500);
+
         let mut params = BTreeMap::new();
         params.insert("q".into(), str_val(query));
-        params.insert("k".into(), DataValue::from(limit as i64));
+        params.insert("k".into(), DataValue::from(fts_k));
         params.insert("min_score".into(), DataValue::from(min_score));
 
         // Build type/layer filter clauses
@@ -2045,6 +2050,29 @@ impl CozoStorage {
             params,
         )?;
 
+        Ok(())
+    }
+
+    /// Drop the embedding schema (relation + HNSW index + metadata).
+    /// Used when reconfiguring to a different dimension.
+    pub fn drop_embedding_schema(&self) -> Result<()> {
+        // Drop HNSW index first (ignore errors if not exists)
+        let _ = self.run_script(
+            "::hnsw drop node_embedding:semantic_idx",
+            BTreeMap::new(),
+        );
+        // Drop the relation (ignore errors if not exists)
+        let _ = self.run_script(
+            "::remove node_embedding",
+            BTreeMap::new(),
+        );
+        // Clear the dimension metadata
+        let mut params = BTreeMap::new();
+        params.insert("key".into(), str_val("embedding_dimension"));
+        let _ = self.run_script(
+            r#"?[key] <- [[$key]] :rm mg_meta { key }"#,
+            params,
+        );
         Ok(())
     }
 

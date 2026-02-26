@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use mindgraph::query::TypedSnapshot;
@@ -1267,25 +1267,17 @@ async fn embedding_search(
 }
 
 async fn embedding_search_text(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<EmbeddingSearchTextRequest>,
+    State(_state): State<Arc<AppState>>,
+    Json(_req): Json<EmbeddingSearchTextRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let results = state
-        .graph
-        .semantic_search_text(&req.text, req.k as usize)
-        .await
-        .map_err(map_err_500)?;
-    // Convert Vec<(GraphNode, f64)> to a serializable format
-    let items: Vec<serde_json::Value> = results
-        .into_iter()
-        .map(|(node, score)| {
-            serde_json::json!({
-                "node": node,
-                "score": score,
-            })
-        })
-        .collect();
-    Ok(Json(items))
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: "text-based embedding search requires a configured embedding provider; \
+                    use POST /embeddings/search with a pre-computed vector instead"
+                .into(),
+        }),
+    ))
 }
 
 // ---- P3: Batch Operations ----

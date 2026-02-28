@@ -24,6 +24,10 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct AppState {
     pub(crate) graph: AsyncMindGraph,
     pub(crate) token: Option<String>,
+    /// Embedding model name used for semantic search (MINDGRAPH_EMBEDDING_MODEL env var).
+    pub(crate) embedding_model: String,
+    /// Distance metric for the HNSW index (MINDGRAPH_DISTANCE_METRIC env var).
+    pub(crate) distance_metric: String,
 }
 
 // ---- Helpers ----
@@ -38,6 +42,9 @@ pub(crate) fn map_err_500(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorR
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse {
             error: e.to_string(),
+            code: None,
+            embedding_model: None,
+            distance_metric: None,
         }),
     )
 }
@@ -45,14 +52,56 @@ pub(crate) fn map_err_500(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorR
 pub(crate) fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::BAD_REQUEST,
-        Json(ErrorResponse { error: msg.into() }),
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: None,
+            embedding_model: None,
+            distance_metric: None,
+        }),
     )
 }
 
 pub(crate) fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::NOT_FOUND,
-        Json(ErrorResponse { error: msg.into() }),
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: None,
+            embedding_model: None,
+            distance_metric: None,
+        }),
+    )
+}
+
+pub(crate) fn err_with_code(
+    status: StatusCode,
+    msg: impl Into<String>,
+    code: &'static str,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: Some(code.into()),
+            embedding_model: None,
+            distance_metric: None,
+        }),
+    )
+}
+
+pub(crate) fn err_embedding_not_configured(
+    msg: impl Into<String>,
+    embedding_model: &str,
+    distance_metric: &str,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: Some("embedding_not_configured".into()),
+            embedding_model: Some(embedding_model.into()),
+            distance_metric: Some(distance_metric.into()),
+        }),
     )
 }
 
@@ -77,6 +126,9 @@ async fn auth_middleware(
                     StatusCode::UNAUTHORIZED,
                     Json(ErrorResponse {
                         error: "invalid or missing Bearer token".into(),
+                        code: None,
+                        embedding_model: None,
+                        distance_metric: None,
                     }),
                 )
                     .into_response();
@@ -263,6 +315,13 @@ pub(crate) fn parse_layer(s: &str) -> Option<Layer> {
 #[derive(Serialize)]
 pub(crate) struct ErrorResponse {
     pub(crate) error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) code: Option<String>,
+    /// Present only on embedding_not_configured errors to show what model would be used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) embedding_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) distance_metric: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1279,6 +1338,9 @@ async fn embedding_search_text(
             error: "text-based embedding search requires a configured embedding provider; \
                     use POST /embeddings/search with a pre-computed vector instead"
                 .into(),
+            code: None,
+            embedding_model: None,
+            distance_metric: None,
         }),
     ))
 }
@@ -1678,7 +1740,12 @@ async fn main() {
         graph.set_default_agent(agent).await;
     }
 
-    let state = Arc::new(AppState { graph, token });
+    let embedding_model = std::env::var("MINDGRAPH_EMBEDDING_MODEL")
+        .unwrap_or_else(|_| "text-embedding-3-small".into());
+    let distance_metric = std::env::var("MINDGRAPH_DISTANCE_METRIC")
+        .unwrap_or_else(|_| "cosine".into());
+
+    let state = Arc::new(AppState { graph, token, embedding_model, distance_metric });
 
     let bind_addr = std::env::var("MINDGRAPH_BIND").unwrap_or_else(|_| "127.0.0.1".into());
     let listener = tokio::net::TcpListener::bind((bind_addr.as_str(), port))

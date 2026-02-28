@@ -1,3 +1,5 @@
+pub(crate) mod handlers;
+
 use std::sync::Arc;
 
 use axum::{
@@ -19,18 +21,18 @@ use serde::{Deserialize, Serialize};
 
 // ---- App State ----
 
-struct AppState {
-    graph: AsyncMindGraph,
-    token: Option<String>,
+pub(crate) struct AppState {
+    pub(crate) graph: AsyncMindGraph,
+    pub(crate) token: Option<String>,
 }
 
 // ---- Helpers ----
 
-fn default_agent() -> String {
+pub(crate) fn default_agent() -> String {
     std::env::var("MINDGRAPH_DEFAULT_AGENT").unwrap_or_else(|_| "system".into())
 }
 
-fn map_err_500(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
+pub(crate) fn map_err_500(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
     tracing::error!("internal error: {e}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -40,14 +42,14 @@ fn map_err_500(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
     )
 }
 
-fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+pub(crate) fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::BAD_REQUEST,
         Json(ErrorResponse { error: msg.into() }),
     )
 }
 
-fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+pub(crate) fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::NOT_FOUND,
         Json(ErrorResponse { error: msg.into() }),
@@ -84,7 +86,7 @@ async fn auth_middleware(
     next.run(request).await.into_response()
 }
 
-fn parse_node_type(s: &str) -> NodeType {
+pub(crate) fn parse_node_type(s: &str) -> NodeType {
     match s {
         "Source" => NodeType::Source,
         "Snippet" => NodeType::Snippet,
@@ -156,7 +158,7 @@ fn to_screaming_snake(s: &str) -> String {
             // e.g. "FTSIndex" → "FTS_INDEX" not "F_T_S_INDEX"
             let prev = s.chars().nth(i - 1).unwrap_or('a');
             if prev.is_lowercase()
-                || (prev.is_uppercase() && s.chars().nth(i + 1).map_or(false, |c| c.is_lowercase()))
+                || (prev.is_uppercase() && s.chars().nth(i + 1).is_some_and(|c| c.is_lowercase()))
             {
                 result.push('_');
             }
@@ -166,7 +168,7 @@ fn to_screaming_snake(s: &str) -> String {
     result
 }
 
-fn parse_edge_type(s: &str) -> EdgeType {
+pub(crate) fn parse_edge_type(s: &str) -> EdgeType {
     // Normalize PascalCase/camelCase → SCREAMING_SNAKE_CASE before matching
     let normalized = to_screaming_snake(s);
     match normalized.as_str() {
@@ -244,7 +246,7 @@ fn parse_edge_type(s: &str) -> EdgeType {
     }
 }
 
-fn parse_layer(s: &str) -> Option<Layer> {
+pub(crate) fn parse_layer(s: &str) -> Option<Layer> {
     match s {
         "reality" => Some(Layer::Reality),
         "epistemic" => Some(Layer::Epistemic),
@@ -259,8 +261,8 @@ fn parse_layer(s: &str) -> Option<Layer> {
 // ---- Request/Response Types ----
 
 #[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
+pub(crate) struct ErrorResponse {
+    pub(crate) error: String,
 }
 
 #[derive(Deserialize)]
@@ -1618,6 +1620,25 @@ fn app(state: Arc<AppState>) -> Router {
         // Lifecycle
         .route("/decay", post(decay))
         .route("/purge", post(purge))
+        // Cognitive layer endpoints
+        .route("/reality/ingest", post(handlers::ingest_reality))
+        .route("/reality/entity", post(handlers::manage_entity))
+        .route("/epistemic/argument", post(handlers::argument))
+        .route("/epistemic/inquiry", post(handlers::inquiry))
+        .route("/epistemic/structure", post(handlers::structure))
+        .route("/intent/commitment", post(handlers::commitment))
+        .route("/intent/deliberation", post(handlers::deliberation))
+        .route("/action/procedure", post(handlers::procedure))
+        .route("/action/risk", post(handlers::risk))
+        .route("/memory/session", post(handlers::session_op))
+        .route("/memory/distill", post(handlers::distill))
+        .route("/memory/config", post(handlers::memory_config))
+        .route("/agent/plan", post(handlers::agent_plan))
+        .route("/agent/governance", post(handlers::governance))
+        .route("/agent/execution", post(handlers::execution))
+        .route("/retrieve", post(handlers::retrieve))
+        .route("/traverse", post(handlers::traverse))
+        .route("/evolve", post(handlers::evolve))
         .layer(middleware::from_fn(
             move |headers: HeaderMap, req: Request, next: Next| {
                 let token = token.clone();

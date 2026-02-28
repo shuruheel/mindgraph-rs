@@ -602,7 +602,7 @@ MINDGRAPH_PORT=18790 \
 | `MINDGRAPH_PORT` | `18790` | Listen port |
 | `MINDGRAPH_DEFAULT_AGENT` | `system` | Default agent identity for mutations |
 
-### API Endpoints (31 routes)
+### API Endpoints (49 routes)
 
 **Unauthenticated:**
 
@@ -610,7 +610,7 @@ MINDGRAPH_PORT=18790 \
 |--------|------|-------------|
 | GET | `/health` | Health check |
 
-**Authenticated (Bearer token via middleware):**
+**Authenticated — CRUD Layer (31 routes):**
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -647,6 +647,31 @@ MINDGRAPH_PORT=18790 \
 | POST | `/import` | Import typed snapshot |
 | POST | `/decay` | Salience decay + optional auto-tombstone |
 | POST | `/purge` | Hard-delete old tombstoned data |
+
+**Authenticated — Cognitive Layer (18 routes):**
+
+These higher-level endpoints compose multiple graph operations into single semantic actions. They are designed as MCP tool targets for agentic workflows.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/reality/ingest` | Ingest a source, snippet, or observation into the Reality layer |
+| POST | `/reality/entity` | Create, alias, resolve, fuzzy-resolve, or merge entities |
+| POST | `/epistemic/argument` | Construct a full argument: claim + evidence + warrant + edges |
+| POST | `/epistemic/inquiry` | Add hypothesis, theory, paradigm, anomaly, assumption, or question |
+| POST | `/epistemic/structure` | Add concept, pattern, mechanism, model, analogy, theorem, etc. |
+| POST | `/intent/commitment` | Create a goal, project, or milestone with parent/motivation edges |
+| POST | `/intent/deliberation` | Open decisions, add options/constraints, resolve decisions |
+| POST | `/action/procedure` | Build flows, add steps, affordances, and controls |
+| POST | `/action/risk` | Assess risk or retrieve existing assessments |
+| POST | `/memory/session` | Open a session, record traces, or close a session |
+| POST | `/memory/distill` | Create a summary node that distills multiple source nodes |
+| POST | `/memory/config` | Set/get preferences and memory policies |
+| POST | `/agent/plan` | Create tasks, plans, plan steps, update status, query plans |
+| POST | `/agent/governance` | Create policies, set safety budgets, request/resolve approvals |
+| POST | `/agent/execution` | Track execution lifecycle (start, complete, fail) and register agents |
+| POST | `/retrieve` | Unified retrieval: text search, active goals, open questions, weak claims, etc. |
+| POST | `/traverse` | Graph traversal: reasoning chain, neighborhood BFS, path, or subgraph |
+| POST | `/evolve` | Lifecycle mutations: update, tombstone, restore, decay, history, snapshot |
 
 ### Architecture
 
@@ -692,7 +717,8 @@ mindgraph                      -- Library crate (published to crates.io)
 └── error.rs                   -- Error types + Result alias
 
 mindgraph-server/              -- Binary crate (HTTP server, not published)
-└── src/main.rs                -- Axum REST API wrapping AsyncMindGraph (31 endpoints)
+├── src/main.rs                -- Axum app setup: routes, auth middleware, AppState (31 CRUD endpoints)
+└── src/handlers.rs            -- Cognitive layer handlers (18 higher-level endpoints)
 ```
 
 ## Storage

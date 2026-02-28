@@ -45,7 +45,8 @@ MINDGRAPH_DB_PATH=:memory: MINDGRAPH_TOKEN=test cargo run -p mindgraph-server  #
 - `examples/agent_memory.rs` -- Agent memory example (sessions, preferences, summaries, decay).
 - `examples/embedding_search.rs` -- Embedding search example (mock provider, semantic search).
 - `benches/graph_bench.rs` -- Criterion benchmarks (insert, lookup, search, traversal, export/import).
-- `mindgraph-server/src/main.rs` -- Axum REST API server wrapping `AsyncMindGraph` (31 endpoints).
+- `mindgraph-server/src/main.rs` -- Axum app setup: routes, auth middleware, `AppState`, shared helpers/parsers (31 CRUD endpoints).
+- `mindgraph-server/src/handlers.rs` -- Cognitive layer handlers: 18 higher-level endpoints that compose multiple graph ops.
 - `mindgraph-server/Cargo.toml` -- Server binary crate manifest (depends on `mindgraph` with `async` feature).
 
 ## Workspace Layout
@@ -187,3 +188,4 @@ This repo is a Cargo workspace with two members:
 - **POST /link vs POST /edge**: `/link` takes an edge type string and uses `EdgeProps::default_for(edge_type)`. `/edge` takes full `EdgeProps` for setting specific edge fields.
 - **GET /nodes**: Returns `serde_json::Value` to unify two code paths — `Vec<GraphNode>` when filtered by agent (via `my_nodes()`) and `Page<GraphNode>` when using `find_nodes_paginated`.
 - **Defaults**: `ClaimRequest.confidence` defaults to 0.5 (not 1.0). `SessionRequest.focus` is `Option<String>` (unwrapped to empty string).
+- **Cognitive layer (`handlers.rs`)**: All 18 cognitive endpoints live in `src/handlers.rs` as a `pub(crate)` module. Shared helpers (`AppState`, `ErrorResponse`, `default_agent`, `map_err_500`, `bad_request`, `not_found`, `parse_*`) are re-exported as `pub(crate)` from `main.rs`. `parse_direction()` and `create_link()` are private helpers local to `handlers.rs`. Bundle endpoints (e.g., `/epistemic/argument`) use best-effort atomicity — partial failures leave earlier nodes persisted; callers can clean up via `POST /evolve { action: "tombstone_cascade" }`.

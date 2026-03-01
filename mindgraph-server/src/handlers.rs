@@ -17,8 +17,8 @@ use mindgraph::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::{bad_request, default_agent, map_err_500, not_found, parse_edge_type, parse_layer,
-    parse_node_type, AppState, ErrorResponse};
+use crate::{err_embedding_not_configured, err_with_code, map_err_500, not_found,
+    parse_edge_type, parse_layer, parse_node_type, AppState, ErrorResponse};
 
 // ---- Shared helper ----
 
@@ -45,14 +45,27 @@ async fn create_link(
     Ok(())
 }
 
+fn resolve_agent_id(id: Option<String>) -> String {
+    match id {
+        Some(id) if !id.is_empty() => id,
+        _ => {
+            let default = crate::default_agent();
+            tracing::warn!(
+                "agent_id omitted from request, defaulting to MINDGRAPH_DEFAULT_AGENT (\"{}\")",
+                default
+            );
+            default
+        }
+    }
+}
+
 // ============================================================
 // Endpoint 1 — POST /reality/ingest
 // ============================================================
 
 #[derive(Deserialize)]
 pub(crate) struct IngestRequest {
-    #[serde(rename = "type")]
-    pub(crate) ingest_type: String,
+    pub(crate) action: String,
     pub(crate) label: String,
     pub(crate) content: String,
     #[serde(default)]
@@ -67,17 +80,18 @@ pub(crate) struct IngestRequest {
     pub(crate) confidence: Option<f64>,
     #[serde(default)]
     pub(crate) salience: Option<f64>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn ingest_reality(
     State(state): State<Arc<AppState>>,
     Json(req): Json<IngestRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
-    let props = match req.ingest_type.as_str() {
+    let props = match req.action.as_str() {
         "source" => NodeProps::Source(SourceProps {
             source_type: req.medium.clone().unwrap_or_else(|| "web".into()),
             uri: req.url.clone().unwrap_or_default(),
@@ -86,7 +100,7 @@ pub(crate) async fn ingest_reality(
         }),
         "snippet" => {
             if req.source_uid.is_none() {
-                return Err(bad_request("source_uid is required for snippet type"));
+                return Err(err_with_code(StatusCode::BAD_REQUEST, "source_uid is required for snippet type", "missing_field"));
             }
             NodeProps::Snippet(SnippetProps {
                 content: req.content.clone(),
@@ -98,7 +112,7 @@ pub(crate) async fn ingest_reality(
             timestamp: req.timestamp,
             ..Default::default()
         }),
-        other => return Err(bad_request(format!("unknown ingest type: {other}"))),
+        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown ingest action: {other}"), "unknown_action")),
     };
 
     let mut builder = CreateNode::new(&req.label, props).summary(&req.content);
@@ -114,9 +128,9 @@ pub(crate) async fn ingest_reality(
 
     // Auto-create ExtractedFrom edge for snippet
     let mut edges_created = Vec::new();
-    if req.ingest_type == "snippet" {
+    if req.action == "snippet" {
         if let Some(src_uid) = &req.source_uid {
-            create_link(&state, &uid, src_uid, EdgeType::ExtractedFrom, &req.agent_id).await?;
+            create_link(&state, &uid, src_uid, EdgeType::ExtractedFrom, &agent_id).await?;
             edges_created.push(src_uid.clone());
         }
     }
@@ -125,7 +139,7 @@ pub(crate) async fn ingest_reality(
         StatusCode::CREATED,
         Json(serde_json::json!({
             "uid": uid,
-            "type": req.ingest_type,
+            "action": req.action,
             "label": req.label,
             "edges_created": edges_created,
             "version": node.version,
@@ -156,19 +170,20 @@ pub(crate) struct ManageEntityRequest {
     pub(crate) merge_uid: Option<String>,
     #[serde(default)]
     pub(crate) limit: Option<u32>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn manage_entity(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ManageEntityRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let agent_id = resolve_agent_id(req.agent_id);
     match req.action.as_str() {
         "create" => {
-            let label = req.label.ok_or_else(|| bad_request("label required for create"))?;
+            let label = req.label.ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for create", "missing_field"))?;
             let entity_type = req.entity_type.unwrap_or_else(|| "other".into());
-            let handle = state.graph.agent(&req.agent_id);
+            let handle = state.graph.agent(&agent_id);
             let node = handle
                 .add_node(CreateNode::new(
                     &label,
@@ -183,10 +198,10 @@ pub(crate) async fn manage_entity(
             Ok(Json(serde_json::to_value(node).unwrap()))
         }
         "alias" => {
-            let text = req.text.ok_or_else(|| bad_request("text required for alias"))?;
+            let text = req.text.ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "text required for alias", "missing_field"))?;
             let canon = req
                 .canonical_uid
-                .ok_or_else(|| bad_request("canonical_uid required for alias"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "canonical_uid required for alias", "missing_field"))?;
             state
                 .graph
                 .add_alias(text, Uid::from(canon.as_str()), req.alias_score.unwrap_or(1.0))
@@ -195,7 +210,7 @@ pub(crate) async fn manage_entity(
             Ok(Json(serde_json::json!({ "status": "ok" })))
         }
         "resolve" => {
-            let text = req.text.ok_or_else(|| bad_request("text required for resolve"))?;
+            let text = req.text.ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "text required for resolve", "missing_field"))?;
             let result = state
                 .graph
                 .resolve_alias(text)
@@ -209,7 +224,7 @@ pub(crate) async fn manage_entity(
         "fuzzy_resolve" => {
             let text = req
                 .text
-                .ok_or_else(|| bad_request("text required for fuzzy_resolve"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "text required for fuzzy_resolve", "missing_field"))?;
             let limit = req.limit.unwrap_or(5);
             let matches = state
                 .graph
@@ -233,23 +248,23 @@ pub(crate) async fn manage_entity(
         "merge" => {
             let keep = req
                 .keep_uid
-                .ok_or_else(|| bad_request("keep_uid required for merge"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "keep_uid required for merge", "missing_field"))?;
             let merge = req
                 .merge_uid
-                .ok_or_else(|| bad_request("merge_uid required for merge"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "merge_uid required for merge", "missing_field"))?;
             let result = state
                 .graph
                 .merge_entities(
                     Uid::from(keep.as_str()),
                     Uid::from(merge.as_str()),
                     "merged via API".into(),
-                    req.agent_id,
+                    agent_id,
                 )
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(result).unwrap()))
         }
-        other => Err(bad_request(format!("unknown action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown action: {other}"), "unknown_action")),
     }
 }
 
@@ -300,15 +315,16 @@ pub(crate) struct ArgumentRequest {
     pub(crate) extends_uid: Option<String>,
     #[serde(default)]
     pub(crate) source_uids: Option<Vec<String>>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn argument(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ArgumentRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     // 1. Create Claim node
     let mut claim_builder = CreateNode::new(
@@ -341,7 +357,7 @@ pub(crate) async fn argument(
             .map_err(map_err_500)?;
         let ev_uid = ev_node.uid.to_string();
         // evidence → claim
-        create_link(&state, &ev_uid, &claim_uid, EdgeType::Supports, &req.agent_id).await?;
+        create_link(&state, &ev_uid, &claim_uid, EdgeType::Supports, &agent_id).await?;
         evidence_uids.push(ev_uid);
     }
 
@@ -359,7 +375,7 @@ pub(crate) async fn argument(
             .map_err(map_err_500)?;
         let w_uid = w_node.uid.to_string();
         // claim → warrant
-        create_link(&state, &claim_uid, &w_uid, EdgeType::HasWarrant, &req.agent_id).await?;
+        create_link(&state, &claim_uid, &w_uid, EdgeType::HasWarrant, &agent_id).await?;
         Some(w_uid)
     } else {
         None
@@ -379,10 +395,10 @@ pub(crate) async fn argument(
             .map_err(map_err_500)?;
         let arg_uid = arg_node.uid.to_string();
         // argument → claim (conclusion)
-        create_link(&state, &arg_uid, &claim_uid, EdgeType::HasConclusion, &req.agent_id).await?;
+        create_link(&state, &arg_uid, &claim_uid, EdgeType::HasConclusion, &agent_id).await?;
         // argument → each evidence (premise)
         for ev_uid in &evidence_uids {
-            create_link(&state, &arg_uid, ev_uid, EdgeType::HasPremise, &req.agent_id).await?;
+            create_link(&state, &arg_uid, ev_uid, EdgeType::HasPremise, &agent_id).await?;
         }
         Some(arg_uid)
     } else {
@@ -391,17 +407,17 @@ pub(crate) async fn argument(
 
     // 5. Refutes edge
     if let Some(ref_uid) = &req.refutes_uid {
-        create_link(&state, &claim_uid, ref_uid, EdgeType::Refutes, &req.agent_id).await?;
+        create_link(&state, &claim_uid, ref_uid, EdgeType::Refutes, &agent_id).await?;
     }
 
     // 6. Extends edge
     if let Some(ext_uid) = &req.extends_uid {
-        create_link(&state, &claim_uid, ext_uid, EdgeType::Extends, &req.agent_id).await?;
+        create_link(&state, &claim_uid, ext_uid, EdgeType::Extends, &agent_id).await?;
     }
 
     // 7. Source edges
     for src_uid in req.source_uids.iter().flatten() {
-        create_link(&state, &claim_uid, src_uid, EdgeType::ExtractedFrom, &req.agent_id).await?;
+        create_link(&state, &claim_uid, src_uid, EdgeType::ExtractedFrom, &agent_id).await?;
     }
 
     Ok((
@@ -421,8 +437,7 @@ pub(crate) async fn argument(
 
 #[derive(Deserialize)]
 pub(crate) struct InquiryRequest {
-    #[serde(rename = "type")]
-    pub(crate) inquiry_type: String,
+    pub(crate) action: String,
     pub(crate) label: String,
     pub(crate) content: String,
     #[serde(default)]
@@ -439,17 +454,18 @@ pub(crate) struct InquiryRequest {
     pub(crate) confidence: Option<f64>,
     #[serde(default)]
     pub(crate) salience: Option<f64>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn inquiry(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InquiryRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
-    let props = match req.inquiry_type.as_str() {
+    let props = match req.action.as_str() {
         "hypothesis" => NodeProps::Hypothesis(HypothesisProps {
             statement: req.content.clone(),
             status: req.status.clone(),
@@ -484,7 +500,7 @@ pub(crate) async fn inquiry(
             status: req.status.clone(),
             ..Default::default()
         }),
-        other => return Err(bad_request(format!("unknown inquiry type: {other}"))),
+        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown inquiry action: {other}"), "unknown_action")),
     };
 
     let mut builder = CreateNode::new(&req.label, props).summary(&req.content);
@@ -497,31 +513,31 @@ pub(crate) async fn inquiry(
     let node = handle.add_node(builder).await.map_err(map_err_500)?;
     let uid = node.uid.to_string();
 
-    // Auto-edges based on type
-    if req.inquiry_type == "anomaly" {
+    // Auto-edges based on action
+    if req.action == "anomaly" {
         if let Some(ref anom_uid) = req.anomalous_to_uid {
-            create_link(&state, &uid, anom_uid, EdgeType::AnomalousTo, &req.agent_id).await?;
+            create_link(&state, &uid, anom_uid, EdgeType::AnomalousTo, &agent_id).await?;
         }
     }
-    if req.inquiry_type == "hypothesis" {
+    if req.action == "hypothesis" {
         if let Some(ref test_uid) = req.tests_uid {
-            create_link(&state, &uid, test_uid, EdgeType::Tests, &req.agent_id).await?;
+            create_link(&state, &uid, test_uid, EdgeType::Tests, &agent_id).await?;
         }
     }
-    if req.inquiry_type == "assumption" {
+    if req.action == "assumption" {
         for assume_uid in req.assumes_uid.iter().flatten() {
-            create_link(&state, &uid, assume_uid, EdgeType::Assumes, &req.agent_id).await?;
+            create_link(&state, &uid, assume_uid, EdgeType::Assumes, &agent_id).await?;
         }
     }
-    if req.inquiry_type == "question" || req.inquiry_type == "open_question" {
+    if req.action == "question" || req.action == "open_question" {
         if let Some(ref addr_uid) = req.addresses_uid {
-            create_link(&state, &uid, addr_uid, EdgeType::Addresses, &req.agent_id).await?;
+            create_link(&state, &uid, addr_uid, EdgeType::Addresses, &agent_id).await?;
         }
     }
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "type": req.inquiry_type, "label": req.label })),
+        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label })),
     ))
 }
 
@@ -531,8 +547,7 @@ pub(crate) async fn inquiry(
 
 #[derive(Deserialize)]
 pub(crate) struct StructureRequest {
-    #[serde(rename = "type")]
-    pub(crate) structure_type: String,
+    pub(crate) action: String,
     pub(crate) label: String,
     pub(crate) content: String,
     #[serde(default)]
@@ -553,19 +568,20 @@ pub(crate) struct StructureRequest {
     pub(crate) proven_by_uid: Option<String>,
     #[serde(default)]
     pub(crate) confidence: Option<f64>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn structure(
     State(state): State<Arc<AppState>>,
     Json(req): Json<StructureRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     let summary_text = req.summary.clone().unwrap_or_else(|| req.content.clone());
 
-    let props = match req.structure_type.as_str() {
+    let props = match req.action.as_str() {
         "concept" => NodeProps::Concept(ConceptProps {
             name: req.label.clone(),
             definition: Some(req.content.clone()),
@@ -613,7 +629,7 @@ pub(crate) async fn structure(
             expression: req.content.clone(),
             ..Default::default()
         }),
-        other => return Err(bad_request(format!("unknown structure type: {other}"))),
+        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown structure action: {other}"), "unknown_action")),
     };
 
     let mut builder = CreateNode::new(&req.label, props).summary(&summary_text);
@@ -625,38 +641,38 @@ pub(crate) async fn structure(
 
     // Auto-edges
     if let Some(ref alog_uid) = req.analogous_to_uid {
-        create_link(&state, &uid, alog_uid, EdgeType::AnalogousTo, &req.agent_id).await?;
+        create_link(&state, &uid, alog_uid, EdgeType::AnalogousTo, &agent_id).await?;
     }
-    if req.structure_type == "analogy" {
+    if req.action == "analogy" {
         for t_uid in req.transfers_to_uid.iter().flatten() {
-            create_link(&state, &uid, t_uid, EdgeType::TransfersTo, &req.agent_id).await?;
+            create_link(&state, &uid, t_uid, EdgeType::TransfersTo, &agent_id).await?;
         }
     }
-    if req.structure_type == "model_evaluation" {
+    if req.action == "model_evaluation" {
         if let Some(ref eval_uid) = req.evaluates_uid {
-            create_link(&state, &uid, eval_uid, EdgeType::Evaluates, &req.agent_id).await?;
+            create_link(&state, &uid, eval_uid, EdgeType::Evaluates, &agent_id).await?;
         }
         if let Some(ref out_uid) = req.outperforms_uid {
-            create_link(&state, &uid, out_uid, EdgeType::Outperforms, &req.agent_id).await?;
+            create_link(&state, &uid, out_uid, EdgeType::Outperforms, &agent_id).await?;
         }
     }
-    if req.structure_type == "inference_chain" {
+    if req.action == "inference_chain" {
         for step_uid in req.chain_steps.iter().flatten() {
-            create_link(&state, &uid, step_uid, EdgeType::HasChainStep, &req.agent_id).await?;
+            create_link(&state, &uid, step_uid, EdgeType::HasChainStep, &agent_id).await?;
         }
     }
-    if req.structure_type == "theorem" || req.structure_type == "equation" {
+    if req.action == "theorem" || req.action == "equation" {
         for src_uid in req.derived_from_uid.iter().flatten() {
-            create_link(&state, &uid, src_uid, EdgeType::DerivedFrom, &req.agent_id).await?;
+            create_link(&state, &uid, src_uid, EdgeType::DerivedFrom, &agent_id).await?;
         }
         if let Some(ref pb_uid) = req.proven_by_uid {
-            create_link(&state, &uid, pb_uid, EdgeType::ProvenBy, &req.agent_id).await?;
+            create_link(&state, &uid, pb_uid, EdgeType::ProvenBy, &agent_id).await?;
         }
     }
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "type": req.structure_type, "label": req.label })),
+        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label })),
     ))
 }
 
@@ -666,8 +682,7 @@ pub(crate) async fn structure(
 
 #[derive(Deserialize)]
 pub(crate) struct CommitmentRequest {
-    #[serde(rename = "type")]
-    pub(crate) commitment_type: String,
+    pub(crate) action: String,
     pub(crate) label: String,
     pub(crate) description: String,
     #[serde(default)]
@@ -680,17 +695,18 @@ pub(crate) struct CommitmentRequest {
     pub(crate) due_date: Option<f64>,
     #[serde(default)]
     pub(crate) motivated_by_uid: Option<Vec<String>>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn commitment(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CommitmentRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
-    let props = match req.commitment_type.as_str() {
+    let props = match req.action.as_str() {
         "goal" => NodeProps::Goal(GoalProps {
             description: req.description.clone(),
             status: req.status.clone().or_else(|| Some("active".into())),
@@ -709,7 +725,7 @@ pub(crate) async fn commitment(
             target_date: req.due_date,
             ..Default::default()
         }),
-        other => return Err(bad_request(format!("unknown commitment type: {other}"))),
+        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown commitment action: {other}"), "unknown_action")),
     };
 
     let node = handle
@@ -721,15 +737,15 @@ pub(crate) async fn commitment(
     // Auto-edges
     if let Some(ref par_uid) = req.parent_uid {
         // parent → child (DecomposesInto)
-        create_link(&state, par_uid, &uid, EdgeType::DecomposesInto, &req.agent_id).await?;
+        create_link(&state, par_uid, &uid, EdgeType::DecomposesInto, &agent_id).await?;
     }
     for mot_uid in req.motivated_by_uid.iter().flatten() {
-        create_link(&state, &uid, mot_uid, EdgeType::MotivatedBy, &req.agent_id).await?;
+        create_link(&state, &uid, mot_uid, EdgeType::MotivatedBy, &agent_id).await?;
     }
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "type": req.commitment_type, "label": req.label })),
+        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label })),
     ))
 }
 
@@ -756,21 +772,22 @@ pub(crate) struct DeliberationRequest {
     pub(crate) blocks_uid: Option<String>,
     #[serde(default)]
     pub(crate) informs_uid: Option<Vec<String>>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn deliberation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<DeliberationRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "open_decision" => {
             let label = req
                 .label
-                .ok_or_else(|| bad_request("label required for open_decision"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for open_decision", "missing_field"))?;
             let desc = req.description.clone().unwrap_or_default();
             let node = handle
                 .add_node(CreateNode::new(
@@ -793,10 +810,10 @@ pub(crate) async fn deliberation(
             let dec_uid = req
                 .decision_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("decision_uid required for add_option"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "decision_uid required for add_option", "missing_field"))?;
             let label = req
                 .label
-                .ok_or_else(|| bad_request("label required for add_option"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for add_option", "missing_field"))?;
             let desc = req.description.clone().unwrap_or_default();
             let opt_node = handle
                 .add_node(CreateNode::new(
@@ -810,10 +827,10 @@ pub(crate) async fn deliberation(
                 .map_err(map_err_500)?;
             let opt_uid = opt_node.uid.to_string();
             // decision → option
-            create_link(&state, dec_uid, &opt_uid, EdgeType::HasOption, &req.agent_id).await?;
+            create_link(&state, dec_uid, &opt_uid, EdgeType::HasOption, &agent_id).await?;
             // option informs additional nodes
             for inf_uid in req.informs_uid.iter().flatten() {
-                create_link(&state, &opt_uid, inf_uid, EdgeType::Informs, &req.agent_id).await?;
+                create_link(&state, &opt_uid, inf_uid, EdgeType::Informs, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": opt_uid,
@@ -825,10 +842,10 @@ pub(crate) async fn deliberation(
             let dec_uid = req
                 .decision_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("decision_uid required for add_constraint"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "decision_uid required for add_constraint", "missing_field"))?;
             let label = req
                 .label
-                .ok_or_else(|| bad_request("label required for add_constraint"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for add_constraint", "missing_field"))?;
             let desc = req.description.clone().unwrap_or_default();
             let con_node = handle
                 .add_node(CreateNode::new(
@@ -843,10 +860,10 @@ pub(crate) async fn deliberation(
                 .map_err(map_err_500)?;
             let con_uid = con_node.uid.to_string();
             // decision → constraint
-            create_link(&state, dec_uid, &con_uid, EdgeType::ConstrainedBy, &req.agent_id).await?;
+            create_link(&state, dec_uid, &con_uid, EdgeType::ConstrainedBy, &agent_id).await?;
             // constraint blocks option
             if let Some(ref blk_uid) = req.blocks_uid {
-                create_link(&state, &con_uid, blk_uid, EdgeType::Blocks, &req.agent_id).await?;
+                create_link(&state, &con_uid, blk_uid, EdgeType::Blocks, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": con_uid,
@@ -858,11 +875,11 @@ pub(crate) async fn deliberation(
             let dec_uid = req
                 .decision_uid
                 .clone()
-                .ok_or_else(|| bad_request("decision_uid required for resolve"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "decision_uid required for resolve", "missing_field"))?;
             let chosen = req
                 .chosen_option_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("chosen_option_uid required for resolve"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "chosen_option_uid required for resolve", "missing_field"))?;
             // Fetch current node to get existing props
             let current = state
                 .graph
@@ -889,13 +906,13 @@ pub(crate) async fn deliberation(
                     None,
                     None,
                     updated_props,
-                    req.agent_id.clone(),
+                    agent_id.clone(),
                     "resolved via API".into(),
                 )
                 .await
                 .map_err(map_err_500)?;
             // Create DecidedOn edge
-            create_link(&state, &dec_uid, chosen, EdgeType::DecidedOn, &req.agent_id).await?;
+            create_link(&state, &dec_uid, chosen, EdgeType::DecidedOn, &agent_id).await?;
             Ok(Json(serde_json::json!({
                 "uid": dec_uid,
                 "action": "resolve",
@@ -906,7 +923,7 @@ pub(crate) async fn deliberation(
             let decisions = state.graph.open_decisions().await.map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(decisions).unwrap()))
         }
-        other => Err(bad_request(format!("unknown deliberation action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown deliberation action: {other}"), "unknown_action")),
     }
 }
 
@@ -934,15 +951,16 @@ pub(crate) struct ProcedureRequest {
     pub(crate) uses_affordance_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) goal_uid: Option<String>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn procedure(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ProcedureRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
     let desc = req.description.clone().unwrap_or_default();
 
     match req.action.as_str() {
@@ -960,7 +978,7 @@ pub(crate) async fn procedure(
                 .map_err(map_err_500)?;
             let uid = node.uid.to_string();
             if let Some(ref g_uid) = req.goal_uid {
-                create_link(&state, &uid, g_uid, EdgeType::RelevantTo, &req.agent_id).await?;
+                create_link(&state, &uid, g_uid, EdgeType::RelevantTo, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": uid, "action": "create_flow", "label": req.label,
@@ -970,7 +988,7 @@ pub(crate) async fn procedure(
             let flow_uid = req
                 .flow_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("flow_uid required for add_step"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "flow_uid required for add_step", "missing_field"))?;
             let order = req.step_order.unwrap_or(0);
             let step_node = handle
                 .add_node(CreateNode::new(
@@ -985,15 +1003,15 @@ pub(crate) async fn procedure(
                 .map_err(map_err_500)?;
             let step_uid = step_node.uid.to_string();
             // flow → step
-            create_link(&state, flow_uid, &step_uid, EdgeType::ComposedOf, &req.agent_id).await?;
+            create_link(&state, flow_uid, &step_uid, EdgeType::ComposedOf, &agent_id).await?;
             // previous_step → new_step ordering
             if let Some(ref prev_uid) = req.previous_step_uid {
-                create_link(&state, prev_uid, &step_uid, EdgeType::DependsOn, &req.agent_id)
+                create_link(&state, prev_uid, &step_uid, EdgeType::DependsOn, &agent_id)
                     .await?;
             }
             // step uses affordances
             for aff_uid in req.uses_affordance_uids.iter().flatten() {
-                create_link(&state, &step_uid, aff_uid, EdgeType::StepUses, &req.agent_id).await?;
+                create_link(&state, &step_uid, aff_uid, EdgeType::StepUses, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": step_uid, "action": "add_step", "order": order,
@@ -1031,13 +1049,13 @@ pub(crate) async fn procedure(
                 .map_err(map_err_500)?;
             let ctrl_uid = ctrl_node.uid.to_string();
             if let Some(ref f_uid) = req.flow_uid {
-                create_link(&state, f_uid, &ctrl_uid, EdgeType::Controls, &req.agent_id).await?;
+                create_link(&state, f_uid, &ctrl_uid, EdgeType::Controls, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": ctrl_uid, "action": "add_control", "label": req.label,
             })))
         }
-        other => Err(bad_request(format!("unknown procedure action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown procedure action: {other}"), "unknown_action")),
     }
 }
 
@@ -1064,15 +1082,16 @@ pub(crate) struct RiskRequest {
     pub(crate) residual_risk: Option<f64>,
     #[serde(default)]
     pub(crate) filter_uid: Option<String>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn risk(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RiskRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "assess" => {
@@ -1106,7 +1125,7 @@ pub(crate) async fn risk(
                 .map_err(map_err_500)?;
             let ra_uid = ra_node.uid.to_string();
             if let Some(ref a_uid) = req.assessed_uid {
-                create_link(&state, a_uid, &ra_uid, EdgeType::RiskAssessedBy, &req.agent_id)
+                create_link(&state, a_uid, &ra_uid, EdgeType::RiskAssessedBy, &agent_id)
                     .await?;
             }
             Ok(Json(serde_json::json!({
@@ -1134,7 +1153,7 @@ pub(crate) async fn risk(
             };
             Ok(Json(serde_json::to_value(results).unwrap()))
         }
-        other => Err(bad_request(format!("unknown risk action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown risk action: {other}"), "unknown_action")),
     }
 }
 
@@ -1157,15 +1176,16 @@ pub(crate) struct SessionOpRequest {
     pub(crate) trace_type: Option<String>,
     #[serde(default)]
     pub(crate) relevant_node_uids: Option<Vec<String>>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn session_op(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SessionOpRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "open" => {
@@ -1185,7 +1205,7 @@ pub(crate) async fn session_op(
             let sess_uid = req
                 .session_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("session_uid required for trace"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "session_uid required for trace", "missing_field"))?;
             let content = req.trace_content.clone().unwrap_or_default();
             let trace_node = handle
                 .add_node(CreateNode::new(
@@ -1200,10 +1220,10 @@ pub(crate) async fn session_op(
                 .map_err(map_err_500)?;
             let trace_uid = trace_node.uid.to_string();
             // trace → session
-            create_link(&state, &trace_uid, sess_uid, EdgeType::CapturedIn, &req.agent_id).await?;
+            create_link(&state, &trace_uid, sess_uid, EdgeType::CapturedIn, &agent_id).await?;
             // trace → relevant nodes
             for rel_uid in req.relevant_node_uids.iter().flatten() {
-                create_link(&state, &trace_uid, rel_uid, EdgeType::TraceEntry, &req.agent_id)
+                create_link(&state, &trace_uid, rel_uid, EdgeType::TraceEntry, &agent_id)
                     .await?;
             }
             Ok(Json(serde_json::json!({
@@ -1215,7 +1235,7 @@ pub(crate) async fn session_op(
             let sess_uid = req
                 .session_uid
                 .clone()
-                .ok_or_else(|| bad_request("session_uid required for close"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "session_uid required for close", "missing_field"))?;
             let current = state
                 .graph
                 .get_node(Uid::from(sess_uid.as_str()))
@@ -1237,7 +1257,7 @@ pub(crate) async fn session_op(
                     None,
                     None,
                     updated_props,
-                    req.agent_id,
+                    agent_id,
                     "session closed".into(),
                 )
                 .await
@@ -1248,7 +1268,7 @@ pub(crate) async fn session_op(
                 "version": updated.version,
             })))
         }
-        other => Err(bad_request(format!("unknown session action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown session action: {other}"), "unknown_action")),
     }
 }
 
@@ -1266,15 +1286,16 @@ pub(crate) struct DistillRequest {
     pub(crate) summarizes_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) importance: Option<f64>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn distill(
     State(state): State<Arc<AppState>>,
     Json(req): Json<DistillRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     let source_uids = req
         .summarizes_uids
@@ -1299,10 +1320,10 @@ pub(crate) async fn distill(
     let uid = node.uid.to_string();
 
     if let Some(ref sess_uid) = req.session_uid {
-        create_link(&state, &uid, sess_uid, EdgeType::CapturedIn, &req.agent_id).await?;
+        create_link(&state, &uid, sess_uid, EdgeType::CapturedIn, &agent_id).await?;
     }
     for sum_uid in req.summarizes_uids.iter().flatten() {
-        create_link(&state, &uid, sum_uid, EdgeType::Summarizes, &req.agent_id).await?;
+        create_link(&state, &uid, sum_uid, EdgeType::Summarizes, &agent_id).await?;
     }
 
     Ok((
@@ -1326,30 +1347,31 @@ pub(crate) struct MemoryConfigRequest {
     pub(crate) value: Option<String>,
     #[serde(default)]
     pub(crate) policy_content: Option<String>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn memory_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MemoryConfigRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "set_preference" => {
             let label = req
                 .label
                 .clone()
-                .ok_or_else(|| bad_request("label required for set_preference"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for set_preference", "missing_field"))?;
             let key = req
                 .key
                 .clone()
-                .ok_or_else(|| bad_request("key required for set_preference"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "key required for set_preference", "missing_field"))?;
             let value = req
                 .value
                 .clone()
-                .ok_or_else(|| bad_request("value required for set_preference"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "value required for set_preference", "missing_field"))?;
             let node = handle
                 .add_preference(label.clone(), key, value)
                 .await
@@ -1360,7 +1382,7 @@ pub(crate) async fn memory_config(
             let label = req
                 .label
                 .clone()
-                .ok_or_else(|| bad_request("label required for set_policy"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for set_policy", "missing_field"))?;
             let content = req.policy_content.clone().unwrap_or_default();
             let node = handle
                 .add_node(CreateNode::new(
@@ -1391,7 +1413,7 @@ pub(crate) async fn memory_config(
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(nodes).unwrap()))
         }
-        other => Err(bad_request(format!("unknown memory config action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown memory config action: {other}"), "unknown_action")),
     }
 }
 
@@ -1420,15 +1442,16 @@ pub(crate) struct AgentPlanRequest {
     pub(crate) target_uid: Option<String>,
     #[serde(default)]
     pub(crate) status: Option<String>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn agent_plan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AgentPlanRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "create_task" => {
@@ -1447,7 +1470,7 @@ pub(crate) async fn agent_plan(
                 .map_err(map_err_500)?;
             let uid = node.uid.to_string();
             if let Some(ref g_uid) = req.goal_uid {
-                create_link(&state, &uid, g_uid, EdgeType::Targets, &req.agent_id).await?;
+                create_link(&state, &uid, g_uid, EdgeType::Targets, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({ "uid": uid, "action": "create_task", "label": label })))
         }
@@ -1468,10 +1491,10 @@ pub(crate) async fn agent_plan(
                 .map_err(map_err_500)?;
             let uid = plan_node.uid.to_string();
             if let Some(ref t_uid) = req.task_uid {
-                create_link(&state, &uid, t_uid, EdgeType::PlannedBy, &req.agent_id).await?;
+                create_link(&state, &uid, t_uid, EdgeType::PlannedBy, &agent_id).await?;
             }
             if let Some(ref g_uid) = req.goal_uid {
-                create_link(&state, &uid, g_uid, EdgeType::Targets, &req.agent_id).await?;
+                create_link(&state, &uid, g_uid, EdgeType::Targets, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({ "uid": uid, "action": "create_plan", "label": label })))
         }
@@ -1479,7 +1502,7 @@ pub(crate) async fn agent_plan(
             let plan_uid = req
                 .plan_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("plan_uid required for add_step"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "plan_uid required for add_step", "missing_field"))?;
             let label = req.label.clone().unwrap_or_else(|| "Step".into());
             let desc = req.description.clone().unwrap_or_default();
             let order = req.step_order.unwrap_or(0);
@@ -1497,9 +1520,9 @@ pub(crate) async fn agent_plan(
                 .await
                 .map_err(map_err_500)?;
             let step_uid = step_node.uid.to_string();
-            create_link(&state, plan_uid, &step_uid, EdgeType::HasStep, &req.agent_id).await?;
+            create_link(&state, plan_uid, &step_uid, EdgeType::HasStep, &agent_id).await?;
             for dep_uid in req.depends_on_uids.iter().flatten() {
-                create_link(&state, &step_uid, dep_uid, EdgeType::DependsOn, &req.agent_id)
+                create_link(&state, &step_uid, dep_uid, EdgeType::DependsOn, &agent_id)
                     .await?;
             }
             Ok(Json(serde_json::json!({
@@ -1510,11 +1533,11 @@ pub(crate) async fn agent_plan(
             let target = req
                 .target_uid
                 .clone()
-                .ok_or_else(|| bad_request("target_uid required for update_status"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "target_uid required for update_status", "missing_field"))?;
             let new_status = req
                 .status
                 .clone()
-                .ok_or_else(|| bad_request("status required for update_status"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "status required for update_status", "missing_field"))?;
             // Fetch current node, update status in props
             let current = state
                 .graph
@@ -1546,7 +1569,7 @@ pub(crate) async fn agent_plan(
                     None,
                     None,
                     updated_props,
-                    req.agent_id,
+                    agent_id,
                     format!("status updated to {new_status}"),
                 )
                 .await
@@ -1559,7 +1582,7 @@ pub(crate) async fn agent_plan(
             let plan_uid = req
                 .plan_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("plan_uid required for get_plan"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "plan_uid required for get_plan", "missing_field"))?;
             let plan_node = state
                 .graph
                 .get_node(Uid::from(plan_uid))
@@ -1576,7 +1599,7 @@ pub(crate) async fn agent_plan(
                 "steps": steps,
             })))
         }
-        other => Err(bad_request(format!("unknown plan action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown plan action: {other}"), "unknown_action")),
     }
 }
 
@@ -1607,22 +1630,23 @@ pub(crate) struct GovernanceRequest {
     pub(crate) requires_plan_uid: Option<String>,
     #[serde(default)]
     pub(crate) approval_request: Option<String>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn governance(
     State(state): State<Arc<AppState>>,
     Json(req): Json<GovernanceRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "create_policy" => {
             let label = req
                 .label
                 .clone()
-                .ok_or_else(|| bad_request("label required for create_policy"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for create_policy", "missing_field"))?;
             let content = req.policy_content.clone().unwrap_or_default();
             let node = handle
                 .add_node(CreateNode::new(
@@ -1658,7 +1682,7 @@ pub(crate) async fn governance(
                 .map_err(map_err_500)?;
             let uid = node.uid.to_string();
             if let Some(ref gov_uid) = req.governed_uid {
-                create_link(&state, &uid, gov_uid, EdgeType::BudgetFor, &req.agent_id).await?;
+                create_link(&state, &uid, gov_uid, EdgeType::BudgetFor, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({ "uid": uid, "label": label })))
         }
@@ -1687,7 +1711,7 @@ pub(crate) async fn governance(
                     plan_uid,
                     &appr_uid,
                     EdgeType::RequiresApproval,
-                    &req.agent_id,
+                    &agent_id,
                 )
                 .await?;
             }
@@ -1697,7 +1721,7 @@ pub(crate) async fn governance(
             let appr_uid = req
                 .approval_uid
                 .clone()
-                .ok_or_else(|| bad_request("approval_uid required for resolve_approval"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "approval_uid required for resolve_approval", "missing_field"))?;
             let approved = req.approved.unwrap_or(false);
             let current = state
                 .graph
@@ -1722,7 +1746,7 @@ pub(crate) async fn governance(
                     None,
                     None,
                     updated_props,
-                    req.agent_id,
+                    agent_id,
                     "approval resolved".into(),
                 )
                 .await
@@ -1737,7 +1761,7 @@ pub(crate) async fn governance(
             let approvals = state.graph.pending_approvals().await.map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(approvals).unwrap()))
         }
-        other => Err(bad_request(format!("unknown governance action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown governance action: {other}"), "unknown_action")),
     }
 }
 
@@ -1768,15 +1792,16 @@ pub(crate) struct ExecutionRequest {
     pub(crate) agent_role: Option<String>,
     #[serde(default)]
     pub(crate) filter_plan_uid: Option<String>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn execution(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ExecutionRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
+    let agent_id = resolve_agent_id(req.agent_id);
+    let handle = state.graph.agent(&agent_id);
 
     match req.action.as_str() {
         "start" => {
@@ -1795,10 +1820,10 @@ pub(crate) async fn execution(
                 .map_err(map_err_500)?;
             let uid = exec_node.uid.to_string();
             if let Some(ref p_uid) = req.plan_uid {
-                create_link(&state, &uid, p_uid, EdgeType::ExecutionOf, &req.agent_id).await?;
+                create_link(&state, &uid, p_uid, EdgeType::ExecutionOf, &agent_id).await?;
             }
             if let Some(ref ex_uid) = req.executor_uid {
-                create_link(&state, &uid, ex_uid, EdgeType::ExecutedBy, &req.agent_id).await?;
+                create_link(&state, &uid, ex_uid, EdgeType::ExecutedBy, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({ "uid": uid, "action": "start" })))
         }
@@ -1806,7 +1831,7 @@ pub(crate) async fn execution(
             let exec_uid = req
                 .execution_uid
                 .clone()
-                .ok_or_else(|| bad_request("execution_uid required for complete"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "execution_uid required for complete", "missing_field"))?;
             let current = state
                 .graph
                 .get_node(Uid::from(exec_uid.as_str()))
@@ -1832,13 +1857,13 @@ pub(crate) async fn execution(
                     None,
                     None,
                     updated_props,
-                    req.agent_id.clone(),
+                    agent_id.clone(),
                     "execution completed".into(),
                 )
                 .await
                 .map_err(map_err_500)?;
             if let Some(ref pn_uid) = req.produces_node_uid {
-                create_link(&state, &exec_uid, pn_uid, EdgeType::ProducesNode, &req.agent_id)
+                create_link(&state, &exec_uid, pn_uid, EdgeType::ProducesNode, &agent_id)
                     .await?;
             }
             Ok(Json(serde_json::json!({
@@ -1849,7 +1874,7 @@ pub(crate) async fn execution(
             let exec_uid = req
                 .execution_uid
                 .clone()
-                .ok_or_else(|| bad_request("execution_uid required for fail"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "execution_uid required for fail", "missing_field"))?;
             let current = state
                 .graph
                 .get_node(Uid::from(exec_uid.as_str()))
@@ -1872,7 +1897,7 @@ pub(crate) async fn execution(
                     None,
                     None,
                     updated_props,
-                    req.agent_id,
+                    agent_id,
                     "execution failed".into(),
                 )
                 .await
@@ -1885,7 +1910,7 @@ pub(crate) async fn execution(
             let name = req
                 .agent_name
                 .clone()
-                .ok_or_else(|| bad_request("agent_name required for register_agent"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "agent_name required for register_agent", "missing_field"))?;
             let node = handle
                 .add_node(CreateNode::new(
                     &name,
@@ -1920,7 +1945,7 @@ pub(crate) async fn execution(
             };
             Ok(Json(serde_json::to_value(results).unwrap()))
         }
-        other => Err(bad_request(format!("unknown execution action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown execution action: {other}"), "unknown_action")),
     }
 }
 
@@ -1930,7 +1955,7 @@ pub(crate) async fn execution(
 
 #[derive(Deserialize)]
 pub(crate) struct RetrieveRequest {
-    pub(crate) mode: String,
+    pub(crate) action: String,
     #[serde(default)]
     pub(crate) query: Option<String>,
     #[serde(default)]
@@ -1958,12 +1983,12 @@ pub(crate) async fn retrieve(
     let limit = req.limit.unwrap_or(20);
     let offset = req.offset.unwrap_or(0);
 
-    match req.mode.as_str() {
+    match req.action.as_str() {
         "text" => {
             let query = req
                 .query
                 .clone()
-                .ok_or_else(|| bad_request("query required for text mode"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "query required for text mode", "missing_field"))?;
             let mut opts = SearchOptions::new();
             if let Some(ref nts) = req.node_types {
                 if let Some(first) = nts.first() {
@@ -1983,14 +2008,13 @@ pub(crate) async fn retrieve(
         }
         "semantic" => {
             let k = req.k.unwrap_or(10);
-            Err::<_, (StatusCode, Json<ErrorResponse>)>((
-                StatusCode::NOT_IMPLEMENTED,
-                Json(ErrorResponse {
-                    error: format!(
-                        "semantic text retrieval (k={k}) requires a configured embedding provider; \
-                         use POST /embeddings/search with a pre-computed vector"
-                    ),
-                }),
+            Err(err_embedding_not_configured(
+                format!(
+                    "semantic text retrieval (k={k}) requires a configured embedding provider; \
+                     configure MINDGRAPH_EMBEDDING_MODEL and restart the server"
+                ),
+                &state.embedding_model,
+                &state.distance_metric,
             ))
         }
         "active_goals" => {
@@ -2026,9 +2050,9 @@ pub(crate) async fn retrieve(
             let layer_str = req
                 .layer
                 .as_deref()
-                .ok_or_else(|| bad_request("layer required for layer mode"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "layer required for layer mode", "missing_field"))?;
             let layer = parse_layer(layer_str)
-                .ok_or_else(|| bad_request(format!("unknown layer: {layer_str}")))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, format!("unknown layer: {layer_str}"), "unknown_action"))?;
             let page = state
                 .graph
                 .nodes_in_layer_paginated(layer, Pagination { limit, offset })
@@ -2053,7 +2077,7 @@ pub(crate) async fn retrieve(
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(page).unwrap()))
         }
-        other => Err(bad_request(format!("unknown retrieve mode: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown retrieve action: {other}"), "unknown_action")),
     }
 }
 
@@ -2063,7 +2087,7 @@ pub(crate) async fn retrieve(
 
 #[derive(Deserialize)]
 pub(crate) struct TraverseRequest {
-    pub(crate) mode: String,
+    pub(crate) action: String,
     pub(crate) start_uid: String,
     #[serde(default)]
     pub(crate) end_uid: Option<String>,
@@ -2094,7 +2118,7 @@ pub(crate) async fn traverse(
         weight_threshold: req.weight_threshold,
     };
 
-    match req.mode.as_str() {
+    match req.action.as_str() {
         "chain" => {
             let steps = state
                 .graph
@@ -2123,7 +2147,7 @@ pub(crate) async fn traverse(
             let end_uid = req
                 .end_uid
                 .as_deref()
-                .ok_or_else(|| bad_request("end_uid required for path mode"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "end_uid required for path mode", "missing_field"))?;
             let path = state
                 .graph
                 .find_path(start, Uid::from(end_uid), opts)
@@ -2149,7 +2173,7 @@ pub(crate) async fn traverse(
                 "edges": edges,
             })))
         }
-        other => Err(bad_request(format!("unknown traverse mode: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown traverse action: {other}"), "unknown_action")),
     }
 }
 
@@ -2183,14 +2207,15 @@ pub(crate) struct EvolveRequest {
     pub(crate) min_age_secs: Option<f64>,
     #[serde(default)]
     pub(crate) version: Option<i64>,
-    #[serde(default = "default_agent")]
-    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
 }
 
 pub(crate) async fn evolve(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EvolveRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let agent_id = resolve_agent_id(req.agent_id);
     let uid = Uid::from(req.uid.as_str());
     let reason = req.reason.clone().unwrap_or_else(|| "updated via /evolve".into());
 
@@ -2239,7 +2264,7 @@ pub(crate) async fn evolve(
                     conf,
                     sal,
                     merged_props,
-                    req.agent_id,
+                    agent_id,
                     reason,
                 )
                 .await
@@ -2250,14 +2275,14 @@ pub(crate) async fn evolve(
             if req.cascade.unwrap_or(false) {
                 let result = state
                     .graph
-                    .tombstone_cascade(uid, reason, req.agent_id)
+                    .tombstone_cascade(uid, reason, agent_id)
                     .await
                     .map_err(map_err_500)?;
                 Ok(Json(serde_json::to_value(result).unwrap()))
             } else {
                 state
                     .graph
-                    .tombstone(uid, reason, req.agent_id)
+                    .tombstone(uid, reason, agent_id)
                     .await
                     .map_err(map_err_500)?;
                 Ok(Json(serde_json::json!({ "uid": req.uid, "action": "tombstone" })))
@@ -2308,7 +2333,7 @@ pub(crate) async fn evolve(
         "snapshot" => {
             let version = req
                 .version
-                .ok_or_else(|| bad_request("version required for snapshot action"))?;
+                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "version required for snapshot action", "missing_field"))?;
             let record = state
                 .graph
                 .node_at_version(uid, version)
@@ -2325,7 +2350,7 @@ pub(crate) async fn evolve(
         "tombstone_edge" => {
             state
                 .graph
-                .tombstone_edge(uid, reason, req.agent_id)
+                .tombstone_edge(uid, reason, agent_id)
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::json!({ "uid": req.uid, "action": "tombstone_edge" })))
@@ -2338,6 +2363,6 @@ pub(crate) async fn evolve(
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::json!({ "uid": req.uid, "action": "restore_edge" })))
         }
-        other => Err(bad_request(format!("unknown evolve action: {other}"))),
+        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown evolve action: {other}"), "unknown_action")),
     }
 }

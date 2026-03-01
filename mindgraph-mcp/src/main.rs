@@ -22,6 +22,8 @@ struct SessionState {
     /// UIDs of nodes created during this session, used to build the distill call.
     nodes_created: Vec<String>,
     last_activity: Instant,
+    /// When the current session was opened; None if no session is active.
+    opened_at: Option<Instant>,
 }
 
 impl SessionState {
@@ -30,6 +32,7 @@ impl SessionState {
             session_uid: None,
             nodes_created: Vec::new(),
             last_activity: Instant::now(),
+            opened_at: None,
         }
     }
 }
@@ -96,6 +99,7 @@ impl MindgraphMcp {
                 if let Some(uid) = val.get("uid").and_then(|v| v.as_str()) {
                     tracing::info!("auto-opened session {uid}");
                     state.session_uid = Some(uid.to_string());
+                    state.opened_at = Some(Instant::now());
                 }
             }
         } else {
@@ -103,11 +107,37 @@ impl MindgraphMcp {
         }
     }
 
+    /// Return the current session context as a CallToolResult.
+    /// This is a local operation — no HTTP round-trip required.
+    fn get_session_context(&self) -> CallToolResult {
+        let state = self.session.lock().unwrap();
+        let session_active = state.session_uid.is_some();
+        let session_uid = state.session_uid.clone();
+        let nodes_created = state.nodes_created.clone();
+        let session_age_minutes = state.opened_at
+            .map(|t| t.elapsed().as_secs() / 60)
+            .unwrap_or(0);
+        let recommendation = if !session_active || session_age_minutes > 25 {
+            "open_fresh"
+        } else {
+            "continue"
+        };
+        let body = serde_json::json!({
+            "session_active": session_active,
+            "session_uid": session_uid,
+            "nodes_created": nodes_created,
+            "session_age_minutes": session_age_minutes,
+            "recommendation": recommendation,
+        });
+        CallToolResult::success(vec![Content::text(body.to_string())])
+    }
+
     /// Close the current session: distill if nodes were created, then close.
     /// Safe to call more than once — the second call is a no-op.
     async fn auto_close(&self, reason: &str) {
         let (session_uid, nodes_created) = {
             let mut state = self.session.lock().unwrap();
+            state.opened_at = None;
             (state.session_uid.take(), std::mem::take(&mut state.nodes_created))
         };
         let Some(uid) = session_uid else { return };
@@ -206,9 +236,9 @@ impl ServerHandler for MindgraphMcp {
                 website_url: None,
             },
             instructions: Some(
-                "Session open/close is managed automatically by the server. \
-                 Use retrieve active_goals + open_questions at conversation start for context. \
-                 Use distill to create named summaries of specific work phases within a session."
+                "Call get_session_context at conversation start to check for an active session. \
+                 Use track_session open to begin a session, retrieve active_goals + open_questions \
+                 for context, and distill + track_session close at conversation end."
                     .into(),
             ),
             ..Default::default()
@@ -234,6 +264,11 @@ impl ServerHandler for MindgraphMcp {
     ) -> Result<CallToolResult, McpError> {
         let tool_name = request.name.as_ref();
         let args = Value::Object(request.arguments.unwrap_or_default());
+
+        // Local operation: return session state without touching the server.
+        if tool_name == "get_session_context" {
+            return Ok(self.get_session_context());
+        }
 
         // Guarantee a session exists before any graph operation.
         self.ensure_session_open(tool_name, &args).await;
@@ -745,12 +780,12 @@ fn all_tools() -> Vec<Tool> {
         // ── track_session ─────────────────────────────────────────────────────
         mk_tool(
             "track_session",
-            "Call to record significant mid-session reasoning steps \
-             (action: trace, requires session_uid from retrieve or existing context) \
-             or to manually close and summarize a session early \
-             (action: close, requires session_uid). \
-             Session open/close is handled automatically by the server — \
-             you do not need to call open or close manually.",
+            "Call at the start of every conversation (action: open — provide a focus summary \
+             describing the session intent), periodically to record key reasoning steps \
+             (action: trace — requires session_uid, provide trace_content), and at \
+             conversation end (action: close — requires session_uid). The session lifecycle \
+             is: open → retrieve active_goals + open_questions → work → trace significant \
+             insights → distill → close.",
             serde_json::json!({
                 "type": "object",
                 "required": ["action"],
@@ -781,12 +816,11 @@ fn all_tools() -> Vec<Tool> {
         // ── distill ────────────────────────────────────────────────────────────
         mk_tool(
             "distill",
-            "Call to create a named, curated summary of a set of nodes with a specific \
-             label and importance score. The server automatically distills at session end — \
-             call this explicitly when you want a named summary of a specific phase of \
-             work within a session. Provide `label` (title), `content` (the distilled \
-             insight), `summarizes_uids[]` (the nodes being summarized), and `importance` \
-             (0.0–1.0 salience). Link to the current session via `session_uid`.",
+            "Call at conversation end or when compressing a set of nodes into a durable \
+             summary. Provide `label` (title), `content` (the distilled insight), \
+             `summarizes_uids[]` (the nodes being summarized), and `importance` (0.0–1.0 \
+             salience). Link to the current session via `session_uid`. Always call just \
+             before `track_session close`.",
             serde_json::json!({
                 "type": "object",
                 "required": ["label", "content", "summarizes_uids"],
@@ -1176,6 +1210,20 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
+
+        // ── get_session_context ────────────────────────────────────────────────
+        mk_tool(
+            "get_session_context",
+            "Call at the start of any conversation to check whether a session is already \
+             open from a previous burst of activity. Returns the current session_uid if one \
+             exists, the list of node UIDs created so far in this session, and the time \
+             elapsed since the session opened. Use this to decide whether to open a fresh \
+             session or continue an existing one.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        ),
     ]
 }
 
@@ -1205,32 +1253,10 @@ async fn main() -> anyhow::Result<()> {
         session: Arc::new(Mutex::new(SessionState::new())),
     };
 
-    // ── Signal handlers ──────────────────────────────────────────────────────
-    // SIGINT (Ctrl-C)
-    let sigint_handle = svc.clone();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("SIGINT received — auto-closing session");
-        sigint_handle.auto_close("SIGINT").await;
-        std::process::exit(0);
-    });
-
-    // SIGTERM (Unix only)
-    #[cfg(unix)]
-    {
-        let sigterm_handle = svc.clone();
-        tokio::spawn(async move {
-            use tokio::signal::unix::{signal, SignalKind};
-            if let Ok(mut stream) = signal(SignalKind::terminate()) {
-                stream.recv().await;
-                tracing::info!("SIGTERM received — auto-closing session");
-                sigterm_handle.auto_close("SIGTERM").await;
-                std::process::exit(0);
-            }
-        });
-    }
-
     // ── Idle timeout (30 min) ────────────────────────────────────────────────
+    // With stdio transport the process stays alive across conversations, so
+    // connection drop cannot be used as a session boundary. Instead we close
+    // stale sessions after 30 minutes of inactivity.
     let idle_handle = svc.clone();
     tokio::spawn(async move {
         const IDLE_SECS: u64 = 30 * 60;
@@ -1242,20 +1268,18 @@ async fn main() -> anyhow::Result<()> {
                     && state.last_activity.elapsed() >= Duration::from_secs(IDLE_SECS)
             };
             if should_close {
-                tracing::info!("session idle for {IDLE_SECS}s — auto-closing");
+                tracing::info!(
+                    "Session closed due to inactivity (30min timeout) — \
+                     conversation boundary not detectable via stdio transport."
+                );
                 idle_handle.auto_close("idle timeout").await;
             }
         }
     });
 
     // ── Serve ────────────────────────────────────────────────────────────────
-    let close_handle = svc.clone();
     tracing::info!("mindgraph-mcp starting (stdio)");
     let server = svc.serve(stdio()).await?;
     server.waiting().await?;
-
-    // Connection closed cleanly — auto-close the session.
-    tracing::info!("MCP connection closed — auto-closing session");
-    close_handle.auto_close("connection closed").await;
     Ok(())
 }

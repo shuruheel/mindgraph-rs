@@ -190,20 +190,34 @@ fn all_tools() -> Vec<Tool> {
                         "enum": ["create", "alias", "resolve", "fuzzy_resolve", "merge"],
                         "description": "Operation to perform"
                     },
-                    "name": { "type": "string", "description": "Entity name" },
+                    "name": { "type": "string", "description": "Entity name (for create)" },
                     "entity_type": {
                         "type": "string",
                         "description": "Entity subtype e.g. Person, Organization, Place"
                     },
-                    "uid": { "type": "string", "description": "Target entity UID (for alias/merge)" },
-                    "alias": { "type": "string", "description": "Alias name to add" },
-                    "merge_into_uid": {
+                    "text": {
                         "type": "string",
-                        "description": "UID of canonical entity (for merge)"
+                        "description": "Name/text to look up or add as alias (for alias/resolve/fuzzy_resolve)"
                     },
-                    "query": {
+                    "canonical_uid": {
                         "type": "string",
-                        "description": "Search string for fuzzy_resolve"
+                        "description": "UID of the canonical entity (for alias)"
+                    },
+                    "alias_score": {
+                        "type": "number",
+                        "description": "Alias confidence 0.0–1.0 (for alias)"
+                    },
+                    "keep_uid": {
+                        "type": "string",
+                        "description": "UID of entity to keep (for merge)"
+                    },
+                    "merge_uid": {
+                        "type": "string",
+                        "description": "UID of entity to merge away (for merge)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (for fuzzy_resolve, default 5)"
                     },
                     "agent_id": { "type": "string", "description": "Agent identity (optional)" }
                 }
@@ -225,9 +239,10 @@ fn all_tools() -> Vec<Tool> {
                 "properties": {
                     "claim": {
                         "type": "object",
-                        "required": ["content"],
+                        "required": ["label", "content"],
                         "properties": {
-                            "content": { "type": "string" },
+                            "label": { "type": "string", "description": "Short title for the claim" },
+                            "content": { "type": "string", "description": "Full claim statement" },
                             "confidence": { "type": "number" }
                         }
                     },
@@ -235,20 +250,32 @@ fn all_tools() -> Vec<Tool> {
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["description"],
+                            "required": ["label", "description"],
                             "properties": {
-                                "description": { "type": "string" },
+                                "label": { "type": "string", "description": "Short title for this piece of evidence" },
+                                "description": { "type": "string", "description": "Evidence detail" },
                                 "evidence_type": {
                                     "type": "string",
                                     "description": "e.g. empirical, anecdotal, statistical"
-                                },
-                                "source_uid": { "type": "string" }
+                                }
                             }
                         }
                     },
                     "warrant": {
-                        "type": "string",
-                        "description": "Logical link between evidence and claim"
+                        "type": "object",
+                        "description": "Logical bridge between evidence and claim",
+                        "properties": {
+                            "label": { "type": "string", "description": "Short title for the warrant" },
+                            "principle": { "type": "string", "description": "The inferential principle that links evidence to claim" }
+                        }
+                    },
+                    "argument": {
+                        "type": "object",
+                        "description": "Optional wrapping argument node grouping claim + evidence",
+                        "properties": {
+                            "label": { "type": "string" },
+                            "summary": { "type": "string" }
+                        }
                     },
                     "refutes_uid": {
                         "type": "string",
@@ -257,6 +284,11 @@ fn all_tools() -> Vec<Tool> {
                     "extends_uid": {
                         "type": "string",
                         "description": "UID of claim this argument extends"
+                    },
+                    "source_uids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UIDs of ingested sources supporting the claim"
                     },
                     "agent_id": { "type": "string" }
                 }
@@ -308,7 +340,7 @@ fn all_tools() -> Vec<Tool> {
              across sessions.",
             serde_json::json!({
                 "type": "object",
-                "required": ["action", "label"],
+                "required": ["action", "label", "content"],
                 "properties": {
                     "action": {
                         "type": "string",
@@ -319,12 +351,15 @@ fn all_tools() -> Vec<Tool> {
                         "description": "Type of structural knowledge to crystallize"
                     },
                     "label": { "type": "string", "description": "Name of the concept/pattern" },
+                    "content": {
+                        "type": "string",
+                        "description": "Detailed description or definition (used as the node body)"
+                    },
                     "summary": {
                         "type": "string",
-                        "description": "Detailed description or definition"
+                        "description": "Optional shorter summary; falls back to content if omitted"
                     },
                     "confidence": { "type": "number" },
-                    "salience": { "type": "number" },
                     "related_uids": {
                         "type": "array",
                         "items": { "type": "string" },
@@ -345,7 +380,7 @@ fn all_tools() -> Vec<Tool> {
              `retrieve action: active_goals`.",
             serde_json::json!({
                 "type": "object",
-                "required": ["action", "label"],
+                "required": ["action", "label", "description"],
                 "properties": {
                     "action": {
                         "type": "string",
@@ -353,16 +388,27 @@ fn all_tools() -> Vec<Tool> {
                         "description": "Type of commitment to create"
                     },
                     "label": { "type": "string", "description": "Goal/project/milestone title" },
-                    "summary": { "type": "string", "description": "Description and acceptance criteria" },
-                    "confidence": { "type": "number" },
-                    "salience": { "type": "number" },
+                    "description": { "type": "string", "description": "Description and acceptance criteria" },
+                    "priority": {
+                        "type": "string",
+                        "description": "Priority level e.g. high, medium, low"
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Initial status (default: active for goals)"
+                    },
                     "parent_uid": {
                         "type": "string",
-                        "description": "UID of parent goal or project"
+                        "description": "UID of parent goal or project (creates DecomposesInto edge)"
                     },
                     "motivated_by_uid": {
-                        "type": "string",
-                        "description": "UID of motivating belief or claim"
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UIDs of motivating beliefs or claims"
+                    },
+                    "due_date": {
+                        "type": "number",
+                        "description": "Unix timestamp deadline (for milestone)"
                     },
                     "agent_id": { "type": "string" }
                 }
@@ -391,13 +437,22 @@ fn all_tools() -> Vec<Tool> {
                         "type": "string",
                         "description": "UID of the decision node (for add_option/add_constraint/resolve)"
                     },
-                    "option_content": {
+                    "description": {
                         "type": "string",
-                        "description": "Text of the option being added"
+                        "description": "Description of the decision, option, or constraint being added"
                     },
-                    "constraint_content": {
+                    "constraint_type": {
                         "type": "string",
-                        "description": "Text of the constraint being added"
+                        "description": "Type of constraint e.g. budget, technical, legal (for add_constraint)"
+                    },
+                    "blocks_uid": {
+                        "type": "string",
+                        "description": "UID of option this constraint blocks (for add_constraint)"
+                    },
+                    "informs_uid": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UIDs this option informs (for add_option)"
                     },
                     "chosen_option_uid": {
                         "type": "string",
@@ -431,6 +486,10 @@ fn all_tools() -> Vec<Tool> {
                     },
                     "label": { "type": "string", "description": "Flow/step/affordance title" },
                     "summary": { "type": "string" },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of the flow, step, affordance, or control"
+                    },
                     "flow_uid": {
                         "type": "string",
                         "description": "UID of the parent flow (for add_step/add_affordance/add_control)"
@@ -443,14 +502,22 @@ fn all_tools() -> Vec<Tool> {
                         "type": "integer",
                         "description": "Ordering index for the step"
                     },
+                    "previous_step_uid": {
+                        "type": "string",
+                        "description": "UID of the preceding step (creates DependsOn edge)"
+                    },
                     "uses_affordance_uids": {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "Affordance UIDs this step uses"
                     },
-                    "condition": {
+                    "affordance_type": {
                         "type": "string",
-                        "description": "Condition expression for control nodes"
+                        "description": "Type of affordance e.g. tool, api, capability (for add_affordance)"
+                    },
+                    "control_type": {
+                        "type": "string",
+                        "description": "Type of control node e.g. conditional, loop, branch (for add_control)"
                     },
                     "agent_id": { "type": "string" }
                 }
@@ -471,8 +538,8 @@ fn all_tools() -> Vec<Tool> {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["create", "get_assessments"],
-                        "description": "Create a risk assessment or retrieve existing ones"
+                        "enum": ["assess", "get_assessments"],
+                        "description": "Assess a risk or retrieve existing assessments"
                     },
                     "assessed_uid": {
                         "type": "string",
@@ -495,6 +562,10 @@ fn all_tools() -> Vec<Tool> {
                     "residual_risk": {
                         "type": "number",
                         "description": "Remaining risk after mitigations 0.0–1.0"
+                    },
+                    "filter_uid": {
+                        "type": "string",
+                        "description": "Filter get_assessments to those linked to this node UID"
                     },
                     "agent_id": { "type": "string" }
                 }
@@ -627,18 +698,22 @@ fn all_tools() -> Vec<Tool> {
                         "description": "Planning operation"
                     },
                     "label": { "type": "string", "description": "Task/plan/step title" },
-                    "summary": { "type": "string" },
+                    "description": { "type": "string", "description": "Detail about the task, plan, or step" },
                     "goal_uid": {
                         "type": "string",
-                        "description": "UID of the related goal (for create_plan)"
+                        "description": "UID of the related goal (for create_task/create_plan)"
+                    },
+                    "task_uid": {
+                        "type": "string",
+                        "description": "UID of the task this plan implements (for create_plan)"
                     },
                     "plan_uid": {
                         "type": "string",
                         "description": "UID of the parent plan (for add_step/get_plan)"
                     },
-                    "task_uid": {
+                    "target_uid": {
                         "type": "string",
-                        "description": "UID of the task (for update_status)"
+                        "description": "UID of the task or plan step to update (for update_status)"
                     },
                     "status": {
                         "type": "string",
@@ -648,7 +723,7 @@ fn all_tools() -> Vec<Tool> {
                     "depends_on_uids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "UIDs of prerequisite steps"
+                        "description": "UIDs of prerequisite steps (for add_step)"
                     },
                     "step_order": { "type": "integer" },
                     "agent_id": { "type": "string" }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["mindgraph-server"]
+members = ["mindgraph-server", "mindgraph-mcp"]
 
 [package]
 name = "mindgraph"

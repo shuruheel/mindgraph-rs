@@ -76,7 +76,7 @@ impl CozoStorage {
 
     /// Insert a node.
     pub fn insert_node(&self, node: &GraphNode) -> Result<()> {
-        let props_json = node.props.to_json();
+        let props_json = node.props.try_to_json_untagged()?;
         let script = r#"
             ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
               confidence, salience, privacy_level, embedding_ref,
@@ -123,7 +123,7 @@ impl CozoStorage {
 
     /// Insert an edge.
     pub fn insert_edge(&self, edge: &GraphEdge) -> Result<()> {
-        let props_json = edge.props.to_json();
+        let props_json = edge.props.try_to_json_untagged()?;
         let script = r#"
             ?[uid, from_uid, to_uid, edge_type, layer, created_at, updated_at, version,
               confidence, weight, tombstone_at, props] <- [[
@@ -288,6 +288,10 @@ impl CozoStorage {
         prop_field: &str,
         prop_value: &str,
     ) -> Result<Vec<GraphNode>> {
+        if !prop_field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(Error::Validation(format!("Invalid property field name: {}", prop_field)));
+        }
+
         let script = format!(
             r#"
                 ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
@@ -323,6 +327,10 @@ impl CozoStorage {
         prop_field: &str,
         prop_values: &[&str],
     ) -> Result<Vec<GraphNode>> {
+        if !prop_field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(Error::Validation(format!("Invalid property field name: {}", prop_field)));
+        }
+
         let conditions: Vec<String> = prop_values
             .iter()
             .enumerate()
@@ -1015,6 +1023,10 @@ impl CozoStorage {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<GraphNode>, bool)> {
+        if !prop_field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(Error::Validation(format!("Invalid property field name: {}", prop_field)));
+        }
+
         let script = format!(
             r#"
                 ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
@@ -1164,7 +1176,7 @@ impl CozoStorage {
             let mut rows = Vec::new();
             let mut params = BTreeMap::new();
             for (i, node) in chunk.iter().enumerate() {
-                let props_json = node.props.to_json();
+                let props_json = node.props.try_to_json_untagged()?;
                 let prefix = format!("n{}", i);
                 params.insert(format!("{}_uid", prefix), str_val(node.uid.as_str()));
                 params.insert(
@@ -1246,7 +1258,7 @@ impl CozoStorage {
             let mut rows = Vec::new();
             let mut params = BTreeMap::new();
             for (i, edge) in chunk.iter().enumerate() {
-                let props_json = edge.props.to_json();
+                let props_json = edge.props.try_to_json_untagged()?;
                 let prefix = format!("e{}", i);
                 params.insert(format!("{}_uid", prefix), str_val(edge.uid.as_str()));
                 params.insert(
@@ -1523,10 +1535,16 @@ impl CozoStorage {
             conditions.push("str_includes(label, $f_label_term)".to_string());
         }
         if let Some((ref field, ref value)) = filter.prop_equals {
+            if !field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(Error::Validation(format!("Invalid property field name: {}", field)));
+            }
             params.insert("f_prop_val".into(), str_val(value));
             conditions.push(format!("get(props, '{}', '') == $f_prop_val", field));
         }
         if let Some((ref field, ref values)) = filter.prop_in {
+            if !field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(Error::Validation(format!("Invalid property field name: {}", field)));
+            }
             let or_parts: Vec<String> = values
                 .iter()
                 .enumerate()
@@ -1564,6 +1582,9 @@ impl CozoStorage {
         }
         // PropConditions (AND'd)
         for (i, cond) in filter.prop_conditions.iter().enumerate() {
+            if !cond.field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err(Error::Validation(format!("Invalid property field name: {}", cond.field)));
+            }
             let var_name = format!("f_pc_{}", i);
             match &cond.op {
                 crate::query::PropOp::Equals(val) => {

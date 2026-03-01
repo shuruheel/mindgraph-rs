@@ -449,15 +449,19 @@ impl EdgeProps {
 
     /// Serialize edge props to JSON (without the tag).
     pub fn to_json(&self) -> serde_json::Value {
+        self.try_to_json_untagged().unwrap_or_default()
+    }
+
+    /// Try to serialize edge props to JSON (without the tag).
+    pub fn try_to_json_untagged(&self) -> crate::Result<serde_json::Value> {
         if let EdgeProps::Custom { data, .. } = self {
-            return data.clone();
+            return Ok(data.clone());
         }
-        // Use serde to serialize, then strip the _type tag
-        let mut v = serde_json::to_value(self).unwrap_or_default();
-        if let Some(obj) = v.as_object_mut() {
-            obj.remove("_type");
+        let mut v = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(ref mut map) = v {
+            map.remove("_type");
         }
-        v
+        Ok(v)
     }
 
     /// Deserialize edge props from JSON using edge type as discriminator.

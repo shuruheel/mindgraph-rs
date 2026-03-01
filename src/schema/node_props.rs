@@ -141,61 +141,24 @@ impl NodeProps {
 
     /// Serialize the inner props to a JSON value (without the tag).
     pub fn to_json(&self) -> serde_json::Value {
-        match self {
-            NodeProps::Source(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Snippet(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Entity(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Observation(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Claim(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Evidence(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Warrant(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Argument(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Hypothesis(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Theory(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Paradigm(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Anomaly(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Method(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Experiment(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Concept(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Assumption(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Question(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::OpenQuestion(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Analogy(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Pattern(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Mechanism(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Model(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::ModelEvaluation(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::InferenceChain(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::SensitivityAnalysis(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::ReasoningStrategy(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Theorem(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Equation(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Goal(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Project(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Decision(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Option(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Constraint(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Milestone(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Affordance(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Flow(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::FlowStep(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Control(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::RiskAssessment(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Session(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Trace(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Summary(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Preference(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::MemoryPolicy(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Agent(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Task(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Plan(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::PlanStep(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Approval(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Policy(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Execution(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::SafetyBudget(p) => serde_json::to_value(p).unwrap_or_default(),
-            NodeProps::Custom { data, .. } => data.clone(),
+        self.try_to_json_untagged().unwrap_or_default()
+    }
+
+    /// Try to serialize the inner props to a JSON value (without the tag).
+    pub fn try_to_json_untagged(&self) -> crate::Result<serde_json::Value> {
+        if let NodeProps::Custom { data, .. } = self {
+            return Ok(data.clone());
         }
+        let mut v = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(ref mut map) = v {
+            map.remove("_type");
+        }
+        Ok(v)
+    }
+
+    /// Try to serialize the inner props to a JSON value (with the tag).
+    pub fn try_to_json(&self) -> crate::Result<serde_json::Value> {
+        serde_json::to_value(self).map_err(crate::Error::from)
     }
 
     /// Deserialize props from JSON using the node type as discriminator.

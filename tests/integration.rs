@@ -2057,7 +2057,7 @@ fn test_convenience_constructors() {
     let obs = g.add_observation("Test obs", "observed something").unwrap();
     assert_eq!(obs.node_type, NodeType::Observation);
 
-    let mem = g.add_memory("Test session", "some context").unwrap();
+    let mem = g.add_session("Test session", "some context").unwrap();
     assert_eq!(mem.node_type, NodeType::Session);
 }
 
@@ -3403,7 +3403,7 @@ fn test_event_filter_by_agent() {
     g.add_entity("sys node", "test").unwrap();
 
     // This uses agent "alice"
-    let g_arc = std::sync::Arc::new(mem_graph());
+    let _g_arc = std::sync::Arc::new(mem_graph());
     // Actually, let's use the same graph with add_node_as
     g.add_node_as(
         CreateNode::new(

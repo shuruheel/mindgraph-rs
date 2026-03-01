@@ -27,7 +27,7 @@ const _ASSERT_SEND_SYNC: () = {
     _assert::<MindGraph>();
 };
 
-type SubscriberMap = HashMap<u64, Box<dyn Fn(&GraphEvent) + Send + Sync>>;
+type SubscriberMap = HashMap<u64, Arc<dyn Fn(&GraphEvent) + Send + Sync>>;
 
 /// The main graph database interface.
 pub struct MindGraph {
@@ -1674,7 +1674,7 @@ impl MindGraph {
         self.subscribers
             .write()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(id, Box::new(cb));
+            .insert(id, Arc::new(cb));
         id
     }
 
@@ -1709,10 +1709,15 @@ impl MindGraph {
 
     /// Emit a graph event to all subscribers.
     fn emit(&self, event: GraphEvent) {
-        let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
-        for cb in subs.values() {
+        let subs = {
+            let subs_lock = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs_lock.values().cloned().collect::<Vec<_>>()
+        };
+
+        for cb in subs {
             cb(&event);
         }
+
         #[cfg(feature = "async")]
         {
             // Ignore send error (no receivers)

@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
@@ -13,6 +14,27 @@ use rmcp::model::{CallToolRequestParams, PaginatedRequestParams};
 use serde_json::Value;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Session state
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct SessionState {
+    session_uid: Option<String>,
+    /// UIDs of nodes created during this session, used to build the distill call.
+    nodes_created: Vec<String>,
+    last_activity: Instant,
+}
+
+impl SessionState {
+    fn new() -> Self {
+        Self {
+            session_uid: None,
+            nodes_created: Vec::new(),
+            last_activity: Instant::now(),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Core proxy struct
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -21,28 +43,148 @@ struct MindgraphMcp {
     client: reqwest::Client,
     base_url: String,
     api_key: String,
+    session: Arc<Mutex<SessionState>>,
 }
 
 impl MindgraphMcp {
-    async fn post(&self, path: &str, body: Value) -> CallToolResult {
+    /// Raw HTTP POST — returns (success, body_text).
+    async fn post_raw(&self, path: &str, body: Value) -> (bool, String) {
         let url = format!("{}{}", self.base_url, path);
         let mut req = self.client.post(&url).json(&body);
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
         match req.send().await {
-            Err(e) => CallToolResult::error(vec![Content::text(format!("HTTP error: {e}"))]),
+            Err(e) => (false, format!("HTTP error: {e}")),
             Ok(resp) => {
+                let ok = resp.status().is_success();
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                if status.is_success() {
-                    CallToolResult::success(vec![Content::text(text)])
-                } else {
-                    CallToolResult::error(vec![Content::text(format!("HTTP {status}: {text}"))])
-                }
+                if ok { (true, text) } else { (false, format!("HTTP {status}: {text}")) }
             }
         }
     }
+
+    /// Ensure a session is open before processing any tool call.
+    /// If none exists, opens one automatically using the tool name and args
+    /// to derive a human-readable focus string.
+    async fn ensure_session_open(&self, tool_name: &str, args: &Value) {
+        // Fast path: already open — just update last_activity.
+        {
+            let mut state = self.session.lock().unwrap();
+            state.last_activity = Instant::now();
+            if state.session_uid.is_some() {
+                return;
+            }
+        }
+
+        // Slow path: open a new session.
+        let focus = derive_focus(tool_name, args);
+        let body = serde_json::json!({
+            "action": "open",
+            "label": "Auto Session",
+            "focus": focus,
+        });
+        let (ok, text) = self.post_raw("/memory/session", body).await;
+
+        let mut state = self.session.lock().unwrap();
+        if state.session_uid.is_some() {
+            return; // opened concurrently
+        }
+        if ok {
+            if let Ok(val) = serde_json::from_str::<Value>(&text) {
+                if let Some(uid) = val.get("uid").and_then(|v| v.as_str()) {
+                    tracing::info!("auto-opened session {uid}");
+                    state.session_uid = Some(uid.to_string());
+                }
+            }
+        } else {
+            tracing::warn!("failed to auto-open session: {text}");
+        }
+    }
+
+    /// Close the current session: distill if nodes were created, then close.
+    /// Safe to call more than once — the second call is a no-op.
+    async fn auto_close(&self, reason: &str) {
+        let (session_uid, nodes_created) = {
+            let mut state = self.session.lock().unwrap();
+            (state.session_uid.take(), std::mem::take(&mut state.nodes_created))
+        };
+        let Some(uid) = session_uid else { return };
+
+        tracing::info!(
+            "auto-closing session {uid} ({reason}), {} node(s) accumulated",
+            nodes_created.len()
+        );
+
+        if !nodes_created.is_empty() {
+            let count = nodes_created.len();
+            let body = serde_json::json!({
+                "label": "Session Summary",
+                "content": format!(
+                    "Auto-generated session summary. Nodes created: {count}. \
+                     Review via traverse or retrieve."
+                ),
+                "summarizes_uids": nodes_created,
+                "importance": 0.7,
+                "session_uid": uid,
+            });
+            let (ok, text) = self.post_raw("/memory/distill", body).await;
+            if ok {
+                tracing::info!("auto-distilled session {uid}");
+            } else {
+                tracing::warn!("distill failed for session {uid}: {text}");
+            }
+        }
+
+        let body = serde_json::json!({ "action": "close", "session_uid": uid });
+        let (ok, text) = self.post_raw("/memory/session", body).await;
+        if ok {
+            tracing::info!("session {uid} closed");
+        } else {
+            tracing::warn!("close failed for session {uid}: {text}");
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a human-readable focus string from the tool name and its arguments.
+fn derive_focus(tool_name: &str, args: &Value) -> String {
+    let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let query  = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let label  = args.get("label").and_then(|v| v.as_str()).unwrap_or("");
+    if !query.is_empty() {
+        format!("Session opened by: {tool_name} {action} query='{query}'")
+    } else if !label.is_empty() {
+        format!("Session opened by: {tool_name} {action} label='{label}'")
+    } else if !action.is_empty() {
+        format!("Session opened by: {tool_name} action={action}")
+    } else {
+        format!("Session opened by: {tool_name}")
+    }
+}
+
+/// Extract any node UIDs from a JSON response body.
+/// Handles single-uid fields and array fields returned by the various endpoints.
+fn extract_uids(text: &str) -> Vec<String> {
+    let Ok(val) = serde_json::from_str::<Value>(text) else { return vec![] };
+    let mut uids = Vec::new();
+    for field in &["uid", "claim_uid", "warrant_uid", "argument_uid"] {
+        if let Some(s) = val.get(*field).and_then(|v| v.as_str()) {
+            uids.push(s.to_string());
+        }
+    }
+    if let Some(arr) = val.get("evidence_uids").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                uids.push(s.to_string());
+            }
+        }
+    }
+    uids
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,8 +206,9 @@ impl ServerHandler for MindgraphMcp {
                 website_url: None,
             },
             instructions: Some(
-                "Use track_session open at conversation start, retrieve active_goals + open_questions for context, \
-                 distill + track_session close at conversation end."
+                "Session open/close is managed automatically by the server. \
+                 Use retrieve active_goals + open_questions at conversation start for context. \
+                 Use distill to create named summaries of specific work phases within a session."
                     .into(),
             ),
             ..Default::default()
@@ -89,8 +232,13 @@ impl ServerHandler for MindgraphMcp {
         request: CallToolRequestParams,
         _ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        let tool_name = request.name.as_ref();
         let args = Value::Object(request.arguments.unwrap_or_default());
-        let path = match request.name.as_ref() {
+
+        // Guarantee a session exists before any graph operation.
+        self.ensure_session_open(tool_name, &args).await;
+
+        let path = match tool_name {
             "ingest" => "/reality/ingest",
             "resolve_entity" => "/reality/entity",
             "argue" => "/epistemic/argument",
@@ -116,7 +264,28 @@ impl ServerHandler for MindgraphMcp {
                 ))
             }
         };
-        Ok(self.post(path, args).await)
+
+        let (ok, text) = self.post_raw(path, args).await;
+
+        // Accumulate node UIDs for the end-of-session distill call.
+        if ok {
+            match tool_name {
+                "ingest" | "argue" | "inquire" | "crystallize" | "commit"
+                | "plan" | "execute" | "resolve_entity" => {
+                    let uids = extract_uids(&text);
+                    if !uids.is_empty() {
+                        self.session.lock().unwrap().nodes_created.extend(uids);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if ok {
+            Ok(CallToolResult::success(vec![Content::text(text)]))
+        } else {
+            Ok(CallToolResult::error(vec![Content::text(text)]))
+        }
     }
 }
 
@@ -576,12 +745,12 @@ fn all_tools() -> Vec<Tool> {
         // ── track_session ─────────────────────────────────────────────────────
         mk_tool(
             "track_session",
-            "Call at the start of every conversation (`open` — provide a `focus` summary \
-             describing the session intent), periodically to record key reasoning steps \
-             (`trace` — requires `session_uid`, provide `trace_content`), and at \
-             conversation end (`close` — requires `session_uid`). The session lifecycle is: \
-             open → retrieve active_goals + open_questions → work → trace significant \
-             insights → close → distill.",
+            "Call to record significant mid-session reasoning steps \
+             (action: trace, requires session_uid from retrieve or existing context) \
+             or to manually close and summarize a session early \
+             (action: close, requires session_uid). \
+             Session open/close is handled automatically by the server — \
+             you do not need to call open or close manually.",
             serde_json::json!({
                 "type": "object",
                 "required": ["action"],
@@ -612,11 +781,12 @@ fn all_tools() -> Vec<Tool> {
         // ── distill ────────────────────────────────────────────────────────────
         mk_tool(
             "distill",
-            "Call at conversation end or when compressing a set of nodes into a durable \
-             summary. Provide `label` (title), `content` (the distilled insight), \
-             `summarizes_uids[]` (the nodes being summarized), and `importance` (0.0–1.0 \
-             salience). Link to the current session via `session_uid`. Always call just \
-             before `track_session close`.",
+            "Call to create a named, curated summary of a set of nodes with a specific \
+             label and importance score. The server automatically distills at session end — \
+             call this explicitly when you want a named summary of a specific phase of \
+             work within a session. Provide `label` (title), `content` (the distilled \
+             insight), `summarizes_uids[]` (the nodes being summarized), and `importance` \
+             (0.0–1.0 salience). Link to the current session via `session_uid`.",
             serde_json::json!({
                 "type": "object",
                 "required": ["label", "content", "summarizes_uids"],
@@ -1032,10 +1202,60 @@ async fn main() -> anyhow::Result<()> {
         client: reqwest::Client::new(),
         base_url,
         api_key,
+        session: Arc::new(Mutex::new(SessionState::new())),
     };
 
+    // ── Signal handlers ──────────────────────────────────────────────────────
+    // SIGINT (Ctrl-C)
+    let sigint_handle = svc.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("SIGINT received — auto-closing session");
+        sigint_handle.auto_close("SIGINT").await;
+        std::process::exit(0);
+    });
+
+    // SIGTERM (Unix only)
+    #[cfg(unix)]
+    {
+        let sigterm_handle = svc.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut stream) = signal(SignalKind::terminate()) {
+                stream.recv().await;
+                tracing::info!("SIGTERM received — auto-closing session");
+                sigterm_handle.auto_close("SIGTERM").await;
+                std::process::exit(0);
+            }
+        });
+    }
+
+    // ── Idle timeout (30 min) ────────────────────────────────────────────────
+    let idle_handle = svc.clone();
+    tokio::spawn(async move {
+        const IDLE_SECS: u64 = 30 * 60;
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            let should_close = {
+                let state = idle_handle.session.lock().unwrap();
+                state.session_uid.is_some()
+                    && state.last_activity.elapsed() >= Duration::from_secs(IDLE_SECS)
+            };
+            if should_close {
+                tracing::info!("session idle for {IDLE_SECS}s — auto-closing");
+                idle_handle.auto_close("idle timeout").await;
+            }
+        }
+    });
+
+    // ── Serve ────────────────────────────────────────────────────────────────
+    let close_handle = svc.clone();
     tracing::info!("mindgraph-mcp starting (stdio)");
     let server = svc.serve(stdio()).await?;
     server.waiting().await?;
+
+    // Connection closed cleanly — auto-close the session.
+    tracing::info!("MCP connection closed — auto-closing session");
+    close_handle.auto_close("connection closed").await;
     Ok(())
 }

@@ -45,6 +45,18 @@ async fn create_link(
     Ok(())
 }
 
+/// Non-fatal edge creation: logs a warning on failure and returns whether the edge was created.
+async fn try_link(state: &AppState, from: &str, to: &str, edge_type: EdgeType, agent: &str) -> bool {
+    let handle = state.graph.agent(agent);
+    match handle.add_link(Uid::from(from), Uid::from(to), edge_type).await {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("skipping edge {from} -> {to}: {e}");
+            false
+        }
+    }
+}
+
 fn resolve_agent_id(id: Option<String>) -> String {
     match id {
         Some(id) if !id.is_empty() => id,
@@ -455,6 +467,8 @@ pub(crate) struct InquiryRequest {
     #[serde(default)]
     pub(crate) salience: Option<f64>,
     #[serde(default)]
+    pub(crate) related_uids: Option<Vec<String>>,
+    #[serde(default)]
     pub(crate) agent_id: Option<String>,
 }
 
@@ -535,9 +549,16 @@ pub(crate) async fn inquiry(
         }
     }
 
+    let mut created_edges: u32 = 0;
+    for rel_uid in req.related_uids.iter().flatten() {
+        if try_link(&state, &uid, rel_uid, EdgeType::RelevantTo, &agent_id).await {
+            created_edges += 1;
+        }
+    }
+
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label })),
+        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label, "created_edges": created_edges })),
     ))
 }
 
@@ -566,6 +587,8 @@ pub(crate) struct StructureRequest {
     pub(crate) derived_from_uid: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) proven_by_uid: Option<String>,
+    #[serde(default)]
+    pub(crate) related_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) confidence: Option<f64>,
     #[serde(default)]
@@ -670,9 +693,16 @@ pub(crate) async fn structure(
         }
     }
 
+    let mut created_edges: u32 = 0;
+    for rel_uid in req.related_uids.iter().flatten() {
+        if try_link(&state, &uid, rel_uid, EdgeType::RelevantTo, &agent_id).await {
+            created_edges += 1;
+        }
+    }
+
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label })),
+        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label, "created_edges": created_edges })),
     ))
 }
 
@@ -1443,6 +1473,8 @@ pub(crate) struct AgentPlanRequest {
     #[serde(default)]
     pub(crate) status: Option<String>,
     #[serde(default)]
+    pub(crate) related_uids: Option<Vec<String>>,
+    #[serde(default)]
     pub(crate) agent_id: Option<String>,
 }
 
@@ -1472,7 +1504,13 @@ pub(crate) async fn agent_plan(
             if let Some(ref g_uid) = req.goal_uid {
                 create_link(&state, &uid, g_uid, EdgeType::Targets, &agent_id).await?;
             }
-            Ok(Json(serde_json::json!({ "uid": uid, "action": "create_task", "label": label })))
+            let mut created_edges: u32 = 0;
+            for rel_uid in req.related_uids.iter().flatten() {
+                if try_link(&state, &uid, rel_uid, EdgeType::Targets, &agent_id).await {
+                    created_edges += 1;
+                }
+            }
+            Ok(Json(serde_json::json!({ "uid": uid, "action": "create_task", "label": label, "created_edges": created_edges })))
         }
         "create_plan" => {
             let label = req.label.clone().unwrap_or_else(|| "Plan".into());
@@ -1496,7 +1534,13 @@ pub(crate) async fn agent_plan(
             if let Some(ref g_uid) = req.goal_uid {
                 create_link(&state, &uid, g_uid, EdgeType::Targets, &agent_id).await?;
             }
-            Ok(Json(serde_json::json!({ "uid": uid, "action": "create_plan", "label": label })))
+            let mut created_edges: u32 = 0;
+            for rel_uid in req.related_uids.iter().flatten() {
+                if try_link(&state, &uid, rel_uid, EdgeType::Targets, &agent_id).await {
+                    created_edges += 1;
+                }
+            }
+            Ok(Json(serde_json::json!({ "uid": uid, "action": "create_plan", "label": label, "created_edges": created_edges })))
         }
         "add_step" => {
             let plan_uid = req
@@ -1793,6 +1837,8 @@ pub(crate) struct ExecutionRequest {
     #[serde(default)]
     pub(crate) filter_plan_uid: Option<String>,
     #[serde(default)]
+    pub(crate) related_uids: Option<Vec<String>>,
+    #[serde(default)]
     pub(crate) agent_id: Option<String>,
 }
 
@@ -1825,7 +1871,13 @@ pub(crate) async fn execution(
             if let Some(ref ex_uid) = req.executor_uid {
                 create_link(&state, &uid, ex_uid, EdgeType::ExecutedBy, &agent_id).await?;
             }
-            Ok(Json(serde_json::json!({ "uid": uid, "action": "start" })))
+            let mut created_edges: u32 = 0;
+            for rel_uid in req.related_uids.iter().flatten() {
+                if try_link(&state, &uid, rel_uid, EdgeType::RelevantTo, &agent_id).await {
+                    created_edges += 1;
+                }
+            }
+            Ok(Json(serde_json::json!({ "uid": uid, "action": "start", "created_edges": created_edges })))
         }
         "complete" => {
             let exec_uid = req
@@ -2364,5 +2416,74 @@ pub(crate) async fn evolve(
             Ok(Json(serde_json::json!({ "uid": req.uid, "action": "restore_edge" })))
         }
         other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown evolve action: {other}"), "unknown_action")),
+    }
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mindgraph::{AsyncMindGraph, ConceptProps, PatternProps};
+
+    async fn make_state() -> Arc<AppState> {
+        let graph = AsyncMindGraph::open_in_memory().await.unwrap();
+        Arc::new(AppState {
+            graph,
+            token: None,
+            embedding_model: String::new(),
+            distance_metric: String::new(),
+        })
+    }
+
+    /// Confirm that `related_uids` on a crystallize (structure) call produces
+    /// a traversable RelevantTo edge rather than being silently dropped.
+    #[tokio::test]
+    async fn test_structure_related_uids_creates_traversable_edge() {
+        let state = make_state().await;
+        let handle = state.graph.agent("test");
+
+        // 1. Create an existing concept node.
+        let concept = handle
+            .add_node(CreateNode::new(
+                "Existing Concept",
+                NodeProps::Concept(ConceptProps {
+                    name: "Existing Concept".into(),
+                    ..Default::default()
+                }),
+            ))
+            .await
+            .unwrap();
+        let concept_uid = concept.uid.to_string();
+
+        // 2. Create a crystallize (pattern) node with related_uids pointing at it.
+        let pattern = handle
+            .add_node(CreateNode::new(
+                "Test Pattern",
+                NodeProps::Pattern(PatternProps {
+                    name: "Test Pattern".into(),
+                    description: "Relates to the existing concept".into(),
+                    ..Default::default()
+                }),
+            ))
+            .await
+            .unwrap();
+        let pattern_uid = pattern.uid.to_string();
+
+        // Simulate what the handler now does for related_uids.
+        let linked = try_link(&state, &pattern_uid, &concept_uid, EdgeType::RelevantTo, "test").await;
+        assert!(linked, "edge creation should succeed");
+
+        // 3. Traverse the neighborhood of the existing concept node.
+        let steps = handle.neighborhood(concept.uid, 1).await.unwrap();
+        let neighbor_uids: Vec<String> = steps.iter().map(|s| s.node_uid.to_string()).collect();
+
+        // 4. Assert the pattern appears as a neighbor.
+        assert!(
+            neighbor_uids.contains(&pattern_uid),
+            "crystallize node should appear in concept's neighborhood via RelevantTo edge; got: {neighbor_uids:?}"
+        );
     }
 }

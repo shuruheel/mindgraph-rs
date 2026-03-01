@@ -320,9 +320,10 @@ fn all_tools() -> Vec<Tool> {
                     "label": { "type": "string", "description": "Short title" },
                     "confidence": { "type": "number" },
                     "salience": { "type": "number" },
-                    "related_uid": {
-                        "type": "string",
-                        "description": "UID of a related node"
+                    "related_uids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UIDs of related nodes to link via RelevantTo edges"
                     },
                     "agent_id": { "type": "string" }
                 }
@@ -726,6 +727,11 @@ fn all_tools() -> Vec<Tool> {
                         "description": "UIDs of prerequisite steps (for add_step)"
                     },
                     "step_order": { "type": "integer" },
+                    "related_uids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UIDs to link via Targets edges (for create_task/create_plan)"
+                    },
                     "agent_id": { "type": "string" }
                 }
             }),
@@ -831,6 +837,11 @@ fn all_tools() -> Vec<Tool> {
                     "agent_role": {
                         "type": "string",
                         "description": "Role of the agent (for register_agent)"
+                    },
+                    "related_uids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "UIDs to link via RelevantTo edges (for start)"
                     },
                     "agent_id": { "type": "string" }
                 }

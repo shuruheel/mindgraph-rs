@@ -3,8 +3,8 @@ use std::sync::Arc;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolResult, Content, Implementation, ListToolsResult, ServerCapabilities, ServerInfo,
-        Tool,
+        CallToolResult, Content, Implementation,
+        ListToolsResult, ServerCapabilities, ServerInfo, Tool,
     },
     service::RequestContext,
     transport::io::stdio,

@@ -1,16 +1,16 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use rmcp::model::{CallToolRequestParams, PaginatedRequestParams};
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolResult, Content, Implementation,
-        ListToolsResult, ServerCapabilities, ServerInfo, Tool,
+        CallToolResult, Content, Implementation, ListToolsResult, ServerCapabilities, ServerInfo,
+        Tool,
     },
     service::RequestContext,
     transport::io::stdio,
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
-use rmcp::model::{CallToolRequestParams, PaginatedRequestParams};
 use serde_json::Value;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +63,11 @@ impl MindgraphMcp {
                 let ok = resp.status().is_success();
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                if ok { (true, text) } else { (false, format!("HTTP {status}: {text}")) }
+                if ok {
+                    (true, text)
+                } else {
+                    (false, format!("HTTP {status}: {text}"))
+                }
             }
         }
     }
@@ -114,7 +118,8 @@ impl MindgraphMcp {
         let session_active = state.session_uid.is_some();
         let session_uid = state.session_uid.clone();
         let nodes_created = state.nodes_created.clone();
-        let session_age_minutes = state.opened_at
+        let session_age_minutes = state
+            .opened_at
             .map(|t| t.elapsed().as_secs() / 60)
             .unwrap_or(0);
         let recommendation = if !session_active || session_age_minutes > 25 {
@@ -138,7 +143,10 @@ impl MindgraphMcp {
         let (session_uid, nodes_created) = {
             let mut state = self.session.lock().unwrap();
             state.opened_at = None;
-            (state.session_uid.take(), std::mem::take(&mut state.nodes_created))
+            (
+                state.session_uid.take(),
+                std::mem::take(&mut state.nodes_created),
+            )
         };
         let Some(uid) = session_uid else { return };
 
@@ -184,8 +192,8 @@ impl MindgraphMcp {
 /// Build a human-readable focus string from the tool name and its arguments.
 fn derive_focus(tool_name: &str, args: &Value) -> String {
     let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
-    let query  = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let label  = args.get("label").and_then(|v| v.as_str()).unwrap_or("");
+    let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let label = args.get("label").and_then(|v| v.as_str()).unwrap_or("");
     if !query.is_empty() {
         format!("Session opened by: {tool_name} {action} query='{query}'")
     } else if !label.is_empty() {
@@ -200,7 +208,9 @@ fn derive_focus(tool_name: &str, args: &Value) -> String {
 /// Extract any node UIDs from a JSON response body.
 /// Handles single-uid fields and array fields returned by the various endpoints.
 fn extract_uids(text: &str) -> Vec<String> {
-    let Ok(val) = serde_json::from_str::<Value>(text) else { return vec![] };
+    let Ok(val) = serde_json::from_str::<Value>(text) else {
+        return vec![];
+    };
     let mut uids = Vec::new();
     for field in &["uid", "claim_uid", "warrant_uid", "argument_uid"] {
         if let Some(s) = val.get(*field).and_then(|v| v.as_str()) {
@@ -229,9 +239,7 @@ impl ServerHandler for MindgraphMcp {
                 name: "mindgraph".into(),
                 version: "0.1.0".into(),
                 title: None,
-                description: Some(
-                    "Semantic memory graph for agentic systems".into(),
-                ),
+                description: Some("Semantic memory graph for agentic systems".into()),
                 icons: None,
                 website_url: None,
             },
@@ -305,8 +313,8 @@ impl ServerHandler for MindgraphMcp {
         // Accumulate node UIDs for the end-of-session distill call.
         if ok {
             match tool_name {
-                "ingest" | "argue" | "inquire" | "crystallize" | "commit"
-                | "plan" | "execute" | "resolve_entity" => {
+                "ingest" | "argue" | "inquire" | "crystallize" | "commit" | "plan" | "execute"
+                | "resolve_entity" => {
                     let uids = extract_uids(&text);
                     if !uids.is_empty() {
                         self.session.lock().unwrap().nodes_created.extend(uids);
@@ -376,7 +384,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── resolve_entity ───────────────────────────────────────────────────
         mk_tool(
             "resolve_entity",
@@ -427,7 +434,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── argue ─────────────────────────────────────────────────────────────
         mk_tool(
             "argue",
@@ -498,7 +504,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── inquire ───────────────────────────────────────────────────────────
         mk_tool(
             "inquire",
@@ -533,7 +538,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── crystallize ───────────────────────────────────────────────────────
         mk_tool(
             "crystallize",
@@ -574,7 +578,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── commit ─────────────────────────────────────────────────────────────
         mk_tool(
             "commit",
@@ -619,7 +622,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── deliberate ────────────────────────────────────────────────────────
         mk_tool(
             "deliberate",
@@ -671,7 +673,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── design_procedure ──────────────────────────────────────────────────
         mk_tool(
             "design_procedure",
@@ -728,7 +729,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── assess_risk ───────────────────────────────────────────────────────
         mk_tool(
             "assess_risk",
@@ -776,7 +776,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── track_session ─────────────────────────────────────────────────────
         mk_tool(
             "track_session",
@@ -812,7 +811,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── distill ────────────────────────────────────────────────────────────
         mk_tool(
             "distill",
@@ -844,7 +842,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── configure ─────────────────────────────────────────────────────────
         mk_tool(
             "configure",
@@ -881,7 +878,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── plan ───────────────────────────────────────────────────────────────
         mk_tool(
             "plan",
@@ -940,7 +936,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── govern ─────────────────────────────────────────────────────────────
         mk_tool(
             "govern",
@@ -995,7 +990,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── execute ────────────────────────────────────────────────────────────
         mk_tool(
             "execute",
@@ -1051,7 +1045,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── retrieve ───────────────────────────────────────────────────────────
         mk_tool(
             "retrieve",
@@ -1098,7 +1091,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── traverse ───────────────────────────────────────────────────────────
         mk_tool(
             "traverse",
@@ -1142,7 +1134,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── evolve ─────────────────────────────────────────────────────────────
         mk_tool(
             "evolve",
@@ -1210,7 +1201,6 @@ fn all_tools() -> Vec<Tool> {
                 }
             }),
         ),
-
         // ── get_session_context ────────────────────────────────────────────────
         mk_tool(
             "get_session_context",
@@ -1242,8 +1232,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let base_url = std::env::var("MINDGRAPH_SERVER_URL")
-        .unwrap_or_else(|_| "http://localhost:18790".into());
+    let base_url =
+        std::env::var("MINDGRAPH_SERVER_URL").unwrap_or_else(|_| "http://localhost:18790".into());
     let api_key = std::env::var("MINDGRAPH_API_KEY").unwrap_or_default();
 
     let svc = MindgraphMcp {

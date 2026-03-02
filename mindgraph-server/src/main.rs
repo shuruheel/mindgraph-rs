@@ -1742,10 +1742,15 @@ async fn main() {
 
     let embedding_model = std::env::var("MINDGRAPH_EMBEDDING_MODEL")
         .unwrap_or_else(|_| "text-embedding-3-small".into());
-    let distance_metric = std::env::var("MINDGRAPH_DISTANCE_METRIC")
-        .unwrap_or_else(|_| "cosine".into());
+    let distance_metric =
+        std::env::var("MINDGRAPH_DISTANCE_METRIC").unwrap_or_else(|_| "cosine".into());
 
-    let state = Arc::new(AppState { graph, token, embedding_model, distance_metric });
+    let state = Arc::new(AppState {
+        graph,
+        token,
+        embedding_model,
+        distance_metric,
+    });
 
     let bind_addr = std::env::var("MINDGRAPH_BIND").unwrap_or_else(|_| "127.0.0.1".into());
     let listener = tokio::net::TcpListener::bind((bind_addr.as_str(), port))

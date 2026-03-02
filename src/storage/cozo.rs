@@ -288,8 +288,14 @@ impl CozoStorage {
         prop_field: &str,
         prop_value: &str,
     ) -> Result<Vec<GraphNode>> {
-        if !prop_field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(Error::Validation(format!("Invalid property field name: {}", prop_field)));
+        if !prop_field
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(Error::Validation(format!(
+                "Invalid property field name: {}",
+                prop_field
+            )));
         }
 
         let script = format!(
@@ -327,8 +333,14 @@ impl CozoStorage {
         prop_field: &str,
         prop_values: &[&str],
     ) -> Result<Vec<GraphNode>> {
-        if !prop_field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(Error::Validation(format!("Invalid property field name: {}", prop_field)));
+        if !prop_field
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(Error::Validation(format!(
+                "Invalid property field name: {}",
+                prop_field
+            )));
         }
 
         let conditions: Vec<String> = prop_values
@@ -1023,8 +1035,14 @@ impl CozoStorage {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<GraphNode>, bool)> {
-        if !prop_field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(Error::Validation(format!("Invalid property field name: {}", prop_field)));
+        if !prop_field
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(Error::Validation(format!(
+                "Invalid property field name: {}",
+                prop_field
+            )));
         }
 
         let script = format!(
@@ -1536,14 +1554,20 @@ impl CozoStorage {
         }
         if let Some((ref field, ref value)) = filter.prop_equals {
             if !field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(Error::Validation(format!("Invalid property field name: {}", field)));
+                return Err(Error::Validation(format!(
+                    "Invalid property field name: {}",
+                    field
+                )));
             }
             params.insert("f_prop_val".into(), str_val(value));
             conditions.push(format!("get(props, '{}', '') == $f_prop_val", field));
         }
         if let Some((ref field, ref values)) = filter.prop_in {
             if !field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(Error::Validation(format!("Invalid property field name: {}", field)));
+                return Err(Error::Validation(format!(
+                    "Invalid property field name: {}",
+                    field
+                )));
             }
             let or_parts: Vec<String> = values
                 .iter()
@@ -1582,8 +1606,15 @@ impl CozoStorage {
         }
         // PropConditions (AND'd)
         for (i, cond) in filter.prop_conditions.iter().enumerate() {
-            if !cond.field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(Error::Validation(format!("Invalid property field name: {}", cond.field)));
+            if !cond
+                .field
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return Err(Error::Validation(format!(
+                    "Invalid property field name: {}",
+                    cond.field
+                )));
             }
             let var_name = format!("f_pc_{}", i);
             match &cond.op {

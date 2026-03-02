@@ -3,22 +3,24 @@
 
 use axum::{extract::State, http::StatusCode, Json};
 use mindgraph::{
-    AffordanceProps, AgentProps, AnalogyProps, AnomalyProps, ApprovalProps, ArgumentProps,
-    AssumptionProps, ClaimProps, Confidence, ConceptProps, ConstraintProps, ControlProps,
+    now, AffordanceProps, AgentProps, AnalogyProps, AnomalyProps, ApprovalProps, ArgumentProps,
+    AssumptionProps, ClaimProps, ConceptProps, Confidence, ConstraintProps, ControlProps,
     CreateNode, DecisionProps, Direction, EdgeType, EvidenceProps, ExecutionProps, FlowProps,
     FlowStepProps, GoalProps, HypothesisProps, InferenceChainProps, MechanismProps,
     MemoryPolicyProps, MilestoneProps, ModelEvaluationProps, ModelProps, NodeFilter, NodeProps,
     NodeType, ObservationProps, OpenQuestionProps, OptionProps, Pagination, ParadigmProps,
     PatternProps, PlanProps, PlanStepProps, PolicyProps, ProjectProps, QuestionProps,
     ReasoningStrategyProps, RiskAssessmentProps, SafetyBudgetProps, Salience, SearchOptions,
-    SensitivityAnalysisProps, SnippetProps, SourceProps, SummaryProps, TaskProps, TheoryProps,
-    TheoremProps, TraceProps, TraversalOptions, Uid, WarrantProps, now,
+    SensitivityAnalysisProps, SnippetProps, SourceProps, SummaryProps, TaskProps, TheoremProps,
+    TheoryProps, TraceProps, TraversalOptions, Uid, WarrantProps,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::{err_embedding_not_configured, err_with_code, map_err_500, not_found,
-    parse_edge_type, parse_layer, parse_node_type, AppState, ErrorResponse};
+use crate::{
+    err_embedding_not_configured, err_with_code, map_err_500, not_found, parse_edge_type,
+    parse_layer, parse_node_type, AppState, ErrorResponse,
+};
 
 // ---- Shared helper ----
 
@@ -46,9 +48,18 @@ async fn create_link(
 }
 
 /// Non-fatal edge creation: logs a warning on failure and returns whether the edge was created.
-async fn try_link(state: &AppState, from: &str, to: &str, edge_type: EdgeType, agent: &str) -> bool {
+async fn try_link(
+    state: &AppState,
+    from: &str,
+    to: &str,
+    edge_type: EdgeType,
+    agent: &str,
+) -> bool {
     let handle = state.graph.agent(agent);
-    match handle.add_link(Uid::from(from), Uid::from(to), edge_type).await {
+    match handle
+        .add_link(Uid::from(from), Uid::from(to), edge_type)
+        .await
+    {
         Ok(_) => true,
         Err(e) => {
             tracing::warn!("skipping edge {from} -> {to}: {e}");
@@ -112,7 +123,11 @@ pub(crate) async fn ingest_reality(
         }),
         "snippet" => {
             if req.source_uid.is_none() {
-                return Err(err_with_code(StatusCode::BAD_REQUEST, "source_uid is required for snippet type", "missing_field"));
+                return Err(err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "source_uid is required for snippet type",
+                    "missing_field",
+                ));
             }
             NodeProps::Snippet(SnippetProps {
                 content: req.content.clone(),
@@ -124,7 +139,13 @@ pub(crate) async fn ingest_reality(
             timestamp: req.timestamp,
             ..Default::default()
         }),
-        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown ingest action: {other}"), "unknown_action")),
+        other => {
+            return Err(err_with_code(
+                StatusCode::BAD_REQUEST,
+                format!("unknown ingest action: {other}"),
+                "unknown_action",
+            ))
+        }
     };
 
     let mut builder = CreateNode::new(&req.label, props).summary(&req.content);
@@ -193,7 +214,13 @@ pub(crate) async fn manage_entity(
     let agent_id = resolve_agent_id(req.agent_id);
     match req.action.as_str() {
         "create" => {
-            let label = req.label.ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for create", "missing_field"))?;
+            let label = req.label.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for create",
+                    "missing_field",
+                )
+            })?;
             let entity_type = req.entity_type.unwrap_or_else(|| "other".into());
             let handle = state.graph.agent(&agent_id);
             let node = handle
@@ -210,33 +237,53 @@ pub(crate) async fn manage_entity(
             Ok(Json(serde_json::to_value(node).unwrap()))
         }
         "alias" => {
-            let text = req.text.ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "text required for alias", "missing_field"))?;
-            let canon = req
-                .canonical_uid
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "canonical_uid required for alias", "missing_field"))?;
+            let text = req.text.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "text required for alias",
+                    "missing_field",
+                )
+            })?;
+            let canon = req.canonical_uid.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "canonical_uid required for alias",
+                    "missing_field",
+                )
+            })?;
             state
                 .graph
-                .add_alias(text, Uid::from(canon.as_str()), req.alias_score.unwrap_or(1.0))
+                .add_alias(
+                    text,
+                    Uid::from(canon.as_str()),
+                    req.alias_score.unwrap_or(1.0),
+                )
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::json!({ "status": "ok" })))
         }
         "resolve" => {
-            let text = req.text.ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "text required for resolve", "missing_field"))?;
-            let result = state
-                .graph
-                .resolve_alias(text)
-                .await
-                .map_err(map_err_500)?;
+            let text = req.text.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "text required for resolve",
+                    "missing_field",
+                )
+            })?;
+            let result = state.graph.resolve_alias(text).await.map_err(map_err_500)?;
             match result {
                 Some(uid) => Ok(Json(serde_json::json!({ "uid": uid.to_string() }))),
                 None => Ok(Json(serde_json::json!({ "uid": null }))),
             }
         }
         "fuzzy_resolve" => {
-            let text = req
-                .text
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "text required for fuzzy_resolve", "missing_field"))?;
+            let text = req.text.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "text required for fuzzy_resolve",
+                    "missing_field",
+                )
+            })?;
             let limit = req.limit.unwrap_or(5);
             let matches = state
                 .graph
@@ -253,17 +300,27 @@ pub(crate) async fn manage_entity(
                     .map_err(map_err_500)?
                     .map(|n| n.label)
                     .unwrap_or_default();
-                results.push(serde_json::json!({ "uid": uid.to_string(), "label": label, "score": score }));
+                results.push(
+                    serde_json::json!({ "uid": uid.to_string(), "label": label, "score": score }),
+                );
             }
             Ok(Json(serde_json::json!({ "matches": results })))
         }
         "merge" => {
-            let keep = req
-                .keep_uid
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "keep_uid required for merge", "missing_field"))?;
-            let merge = req
-                .merge_uid
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "merge_uid required for merge", "missing_field"))?;
+            let keep = req.keep_uid.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "keep_uid required for merge",
+                    "missing_field",
+                )
+            })?;
+            let merge = req.merge_uid.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "merge_uid required for merge",
+                    "missing_field",
+                )
+            })?;
             let result = state
                 .graph
                 .merge_entities(
@@ -276,7 +333,11 @@ pub(crate) async fn manage_entity(
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(result).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -407,7 +468,14 @@ pub(crate) async fn argument(
             .map_err(map_err_500)?;
         let arg_uid = arg_node.uid.to_string();
         // argument → claim (conclusion)
-        create_link(&state, &arg_uid, &claim_uid, EdgeType::HasConclusion, &agent_id).await?;
+        create_link(
+            &state,
+            &arg_uid,
+            &claim_uid,
+            EdgeType::HasConclusion,
+            &agent_id,
+        )
+        .await?;
         // argument → each evidence (premise)
         for ev_uid in &evidence_uids {
             create_link(&state, &arg_uid, ev_uid, EdgeType::HasPremise, &agent_id).await?;
@@ -429,7 +497,14 @@ pub(crate) async fn argument(
 
     // 7. Source edges
     for src_uid in req.source_uids.iter().flatten() {
-        create_link(&state, &claim_uid, src_uid, EdgeType::ExtractedFrom, &agent_id).await?;
+        create_link(
+            &state,
+            &claim_uid,
+            src_uid,
+            EdgeType::ExtractedFrom,
+            &agent_id,
+        )
+        .await?;
     }
 
     Ok((
@@ -514,7 +589,13 @@ pub(crate) async fn inquiry(
             status: req.status.clone(),
             ..Default::default()
         }),
-        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown inquiry action: {other}"), "unknown_action")),
+        other => {
+            return Err(err_with_code(
+                StatusCode::BAD_REQUEST,
+                format!("unknown inquiry action: {other}"),
+                "unknown_action",
+            ))
+        }
     };
 
     let mut builder = CreateNode::new(&req.label, props).summary(&req.content);
@@ -558,7 +639,9 @@ pub(crate) async fn inquiry(
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label, "created_edges": created_edges })),
+        Json(
+            serde_json::json!({ "uid": uid, "action": req.action, "label": req.label, "created_edges": created_edges }),
+        ),
     ))
 }
 
@@ -652,7 +735,13 @@ pub(crate) async fn structure(
             expression: req.content.clone(),
             ..Default::default()
         }),
-        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown structure action: {other}"), "unknown_action")),
+        other => {
+            return Err(err_with_code(
+                StatusCode::BAD_REQUEST,
+                format!("unknown structure action: {other}"),
+                "unknown_action",
+            ))
+        }
     };
 
     let mut builder = CreateNode::new(&req.label, props).summary(&summary_text);
@@ -702,7 +791,9 @@ pub(crate) async fn structure(
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "uid": uid, "action": req.action, "label": req.label, "created_edges": created_edges })),
+        Json(
+            serde_json::json!({ "uid": uid, "action": req.action, "label": req.label, "created_edges": created_edges }),
+        ),
     ))
 }
 
@@ -755,7 +846,13 @@ pub(crate) async fn commitment(
             target_date: req.due_date,
             ..Default::default()
         }),
-        other => return Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown commitment action: {other}"), "unknown_action")),
+        other => {
+            return Err(err_with_code(
+                StatusCode::BAD_REQUEST,
+                format!("unknown commitment action: {other}"),
+                "unknown_action",
+            ))
+        }
     };
 
     let node = handle
@@ -815,9 +912,13 @@ pub(crate) async fn deliberation(
 
     match req.action.as_str() {
         "open_decision" => {
-            let label = req
-                .label
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for open_decision", "missing_field"))?;
+            let label = req.label.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for open_decision",
+                    "missing_field",
+                )
+            })?;
             let desc = req.description.clone().unwrap_or_default();
             let node = handle
                 .add_node(CreateNode::new(
@@ -837,13 +938,20 @@ pub(crate) async fn deliberation(
             })))
         }
         "add_option" => {
-            let dec_uid = req
-                .decision_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "decision_uid required for add_option", "missing_field"))?;
-            let label = req
-                .label
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for add_option", "missing_field"))?;
+            let dec_uid = req.decision_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "decision_uid required for add_option",
+                    "missing_field",
+                )
+            })?;
+            let label = req.label.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for add_option",
+                    "missing_field",
+                )
+            })?;
             let desc = req.description.clone().unwrap_or_default();
             let opt_node = handle
                 .add_node(CreateNode::new(
@@ -869,13 +977,20 @@ pub(crate) async fn deliberation(
             })))
         }
         "add_constraint" => {
-            let dec_uid = req
-                .decision_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "decision_uid required for add_constraint", "missing_field"))?;
-            let label = req
-                .label
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for add_constraint", "missing_field"))?;
+            let dec_uid = req.decision_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "decision_uid required for add_constraint",
+                    "missing_field",
+                )
+            })?;
+            let label = req.label.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for add_constraint",
+                    "missing_field",
+                )
+            })?;
             let desc = req.description.clone().unwrap_or_default();
             let con_node = handle
                 .add_node(CreateNode::new(
@@ -890,7 +1005,14 @@ pub(crate) async fn deliberation(
                 .map_err(map_err_500)?;
             let con_uid = con_node.uid.to_string();
             // decision → constraint
-            create_link(&state, dec_uid, &con_uid, EdgeType::ConstrainedBy, &agent_id).await?;
+            create_link(
+                &state,
+                dec_uid,
+                &con_uid,
+                EdgeType::ConstrainedBy,
+                &agent_id,
+            )
+            .await?;
             // constraint blocks option
             if let Some(ref blk_uid) = req.blocks_uid {
                 create_link(&state, &con_uid, blk_uid, EdgeType::Blocks, &agent_id).await?;
@@ -902,14 +1024,20 @@ pub(crate) async fn deliberation(
             })))
         }
         "resolve" => {
-            let dec_uid = req
-                .decision_uid
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "decision_uid required for resolve", "missing_field"))?;
-            let chosen = req
-                .chosen_option_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "chosen_option_uid required for resolve", "missing_field"))?;
+            let dec_uid = req.decision_uid.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "decision_uid required for resolve",
+                    "missing_field",
+                )
+            })?;
+            let chosen = req.chosen_option_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "chosen_option_uid required for resolve",
+                    "missing_field",
+                )
+            })?;
             // Fetch current node to get existing props
             let current = state
                 .graph
@@ -953,7 +1081,11 @@ pub(crate) async fn deliberation(
             let decisions = state.graph.open_decisions().await.map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(decisions).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown deliberation action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown deliberation action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1015,10 +1147,13 @@ pub(crate) async fn procedure(
             })))
         }
         "add_step" => {
-            let flow_uid = req
-                .flow_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "flow_uid required for add_step", "missing_field"))?;
+            let flow_uid = req.flow_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "flow_uid required for add_step",
+                    "missing_field",
+                )
+            })?;
             let order = req.step_order.unwrap_or(0);
             let step_node = handle
                 .add_node(CreateNode::new(
@@ -1036,8 +1171,7 @@ pub(crate) async fn procedure(
             create_link(&state, flow_uid, &step_uid, EdgeType::ComposedOf, &agent_id).await?;
             // previous_step → new_step ordering
             if let Some(ref prev_uid) = req.previous_step_uid {
-                create_link(&state, prev_uid, &step_uid, EdgeType::DependsOn, &agent_id)
-                    .await?;
+                create_link(&state, prev_uid, &step_uid, EdgeType::DependsOn, &agent_id).await?;
             }
             // step uses affordances
             for aff_uid in req.uses_affordance_uids.iter().flatten() {
@@ -1065,7 +1199,10 @@ pub(crate) async fn procedure(
             })))
         }
         "add_control" => {
-            let ctype = req.control_type.clone().unwrap_or_else(|| "conditional".into());
+            let ctype = req
+                .control_type
+                .clone()
+                .unwrap_or_else(|| "conditional".into());
             let ctrl_node = handle
                 .add_node(CreateNode::new(
                     &req.label,
@@ -1085,7 +1222,11 @@ pub(crate) async fn procedure(
                 "uid": ctrl_uid, "action": "add_control", "label": req.label,
             })))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown procedure action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown procedure action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1132,10 +1273,7 @@ pub(crate) async fn risk(
             let summary = req.description.clone().unwrap_or_else(|| label.clone());
             let residual = req.residual_risk.unwrap_or(0.0);
             let conf = Confidence::new((1.0 - residual).clamp(0.0, 1.0)).map_err(map_err_500)?;
-            let mitigation_str = req
-                .mitigations
-                .as_ref()
-                .map(|v| v.join("; "));
+            let mitigation_str = req.mitigations.as_ref().map(|v| v.join("; "));
             let ra_node = handle
                 .add_node(
                     CreateNode::new(
@@ -1155,8 +1293,7 @@ pub(crate) async fn risk(
                 .map_err(map_err_500)?;
             let ra_uid = ra_node.uid.to_string();
             if let Some(ref a_uid) = req.assessed_uid {
-                create_link(&state, a_uid, &ra_uid, EdgeType::RiskAssessedBy, &agent_id)
-                    .await?;
+                create_link(&state, a_uid, &ra_uid, EdgeType::RiskAssessedBy, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": ra_uid, "action": "assess",
@@ -1183,7 +1320,11 @@ pub(crate) async fn risk(
             };
             Ok(Json(serde_json::to_value(results).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown risk action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown risk action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1232,10 +1373,13 @@ pub(crate) async fn session_op(
             })))
         }
         "trace" => {
-            let sess_uid = req
-                .session_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "session_uid required for trace", "missing_field"))?;
+            let sess_uid = req.session_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "session_uid required for trace",
+                    "missing_field",
+                )
+            })?;
             let content = req.trace_content.clone().unwrap_or_default();
             let trace_node = handle
                 .add_node(CreateNode::new(
@@ -1250,11 +1394,17 @@ pub(crate) async fn session_op(
                 .map_err(map_err_500)?;
             let trace_uid = trace_node.uid.to_string();
             // trace → session
-            create_link(&state, &trace_uid, sess_uid, EdgeType::CapturedIn, &agent_id).await?;
+            create_link(
+                &state,
+                &trace_uid,
+                sess_uid,
+                EdgeType::CapturedIn,
+                &agent_id,
+            )
+            .await?;
             // trace → relevant nodes
             for rel_uid in req.relevant_node_uids.iter().flatten() {
-                create_link(&state, &trace_uid, rel_uid, EdgeType::TraceEntry, &agent_id)
-                    .await?;
+                create_link(&state, &trace_uid, rel_uid, EdgeType::TraceEntry, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": trace_uid,
@@ -1262,10 +1412,13 @@ pub(crate) async fn session_op(
             })))
         }
         "close" => {
-            let sess_uid = req
-                .session_uid
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "session_uid required for close", "missing_field"))?;
+            let sess_uid = req.session_uid.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "session_uid required for close",
+                    "missing_field",
+                )
+            })?;
             let current = state
                 .graph
                 .get_node(Uid::from(sess_uid.as_str()))
@@ -1298,7 +1451,11 @@ pub(crate) async fn session_op(
                 "version": updated.version,
             })))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown session action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown session action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1327,10 +1484,7 @@ pub(crate) async fn distill(
     let agent_id = resolve_agent_id(req.agent_id);
     let handle = state.graph.agent(&agent_id);
 
-    let source_uids = req
-        .summarizes_uids
-        .clone()
-        .unwrap_or_default();
+    let source_uids = req.summarizes_uids.clone().unwrap_or_default();
 
     let mut builder = CreateNode::new(
         &req.label,
@@ -1390,29 +1544,43 @@ pub(crate) async fn memory_config(
 
     match req.action.as_str() {
         "set_preference" => {
-            let label = req
-                .label
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for set_preference", "missing_field"))?;
-            let key = req
-                .key
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "key required for set_preference", "missing_field"))?;
-            let value = req
-                .value
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "value required for set_preference", "missing_field"))?;
+            let label = req.label.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for set_preference",
+                    "missing_field",
+                )
+            })?;
+            let key = req.key.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "key required for set_preference",
+                    "missing_field",
+                )
+            })?;
+            let value = req.value.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "value required for set_preference",
+                    "missing_field",
+                )
+            })?;
             let node = handle
                 .add_preference(label.clone(), key, value)
                 .await
                 .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": node.uid.to_string(), "label": label })))
+            Ok(Json(
+                serde_json::json!({ "uid": node.uid.to_string(), "label": label }),
+            ))
         }
         "set_policy" => {
-            let label = req
-                .label
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for set_policy", "missing_field"))?;
+            let label = req.label.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for set_policy",
+                    "missing_field",
+                )
+            })?;
             let content = req.policy_content.clone().unwrap_or_default();
             let node = handle
                 .add_node(CreateNode::new(
@@ -1425,7 +1593,9 @@ pub(crate) async fn memory_config(
                 ))
                 .await
                 .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": node.uid.to_string(), "label": label })))
+            Ok(Json(
+                serde_json::json!({ "uid": node.uid.to_string(), "label": label }),
+            ))
         }
         "get_preferences" => {
             let nodes = state
@@ -1443,7 +1613,11 @@ pub(crate) async fn memory_config(
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(nodes).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown memory config action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown memory config action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1510,7 +1684,9 @@ pub(crate) async fn agent_plan(
                     created_edges += 1;
                 }
             }
-            Ok(Json(serde_json::json!({ "uid": uid, "action": "create_task", "label": label, "created_edges": created_edges })))
+            Ok(Json(
+                serde_json::json!({ "uid": uid, "action": "create_task", "label": label, "created_edges": created_edges }),
+            ))
         }
         "create_plan" => {
             let label = req.label.clone().unwrap_or_else(|| "Plan".into());
@@ -1540,13 +1716,18 @@ pub(crate) async fn agent_plan(
                     created_edges += 1;
                 }
             }
-            Ok(Json(serde_json::json!({ "uid": uid, "action": "create_plan", "label": label, "created_edges": created_edges })))
+            Ok(Json(
+                serde_json::json!({ "uid": uid, "action": "create_plan", "label": label, "created_edges": created_edges }),
+            ))
         }
         "add_step" => {
-            let plan_uid = req
-                .plan_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "plan_uid required for add_step", "missing_field"))?;
+            let plan_uid = req.plan_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "plan_uid required for add_step",
+                    "missing_field",
+                )
+            })?;
             let label = req.label.clone().unwrap_or_else(|| "Step".into());
             let desc = req.description.clone().unwrap_or_default();
             let order = req.step_order.unwrap_or(0);
@@ -1566,22 +1747,27 @@ pub(crate) async fn agent_plan(
             let step_uid = step_node.uid.to_string();
             create_link(&state, plan_uid, &step_uid, EdgeType::HasStep, &agent_id).await?;
             for dep_uid in req.depends_on_uids.iter().flatten() {
-                create_link(&state, &step_uid, dep_uid, EdgeType::DependsOn, &agent_id)
-                    .await?;
+                create_link(&state, &step_uid, dep_uid, EdgeType::DependsOn, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": step_uid, "action": "add_step", "order": order,
             })))
         }
         "update_status" => {
-            let target = req
-                .target_uid
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "target_uid required for update_status", "missing_field"))?;
-            let new_status = req
-                .status
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "status required for update_status", "missing_field"))?;
+            let target = req.target_uid.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "target_uid required for update_status",
+                    "missing_field",
+                )
+            })?;
+            let new_status = req.status.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "status required for update_status",
+                    "missing_field",
+                )
+            })?;
             // Fetch current node, update status in props
             let current = state
                 .graph
@@ -1623,10 +1809,13 @@ pub(crate) async fn agent_plan(
             })))
         }
         "get_plan" => {
-            let plan_uid = req
-                .plan_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "plan_uid required for get_plan", "missing_field"))?;
+            let plan_uid = req.plan_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "plan_uid required for get_plan",
+                    "missing_field",
+                )
+            })?;
             let plan_node = state
                 .graph
                 .get_node(Uid::from(plan_uid))
@@ -1643,7 +1832,11 @@ pub(crate) async fn agent_plan(
                 "steps": steps,
             })))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown plan action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown plan action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1687,10 +1880,13 @@ pub(crate) async fn governance(
 
     match req.action.as_str() {
         "create_policy" => {
-            let label = req
-                .label
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "label required for create_policy", "missing_field"))?;
+            let label = req.label.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "label required for create_policy",
+                    "missing_field",
+                )
+            })?;
             let content = req.policy_content.clone().unwrap_or_default();
             let node = handle
                 .add_node(CreateNode::new(
@@ -1704,13 +1900,12 @@ pub(crate) async fn governance(
                 ))
                 .await
                 .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": node.uid.to_string(), "label": label })))
+            Ok(Json(
+                serde_json::json!({ "uid": node.uid.to_string(), "label": label }),
+            ))
         }
         "set_budget" => {
-            let label = req
-                .label
-                .clone()
-                .unwrap_or_else(|| "Safety Budget".into());
+            let label = req.label.clone().unwrap_or_else(|| "Safety Budget".into());
             let limit = req.budget_limit.unwrap_or(100.0);
             let node = handle
                 .add_node(CreateNode::new(
@@ -1759,13 +1954,18 @@ pub(crate) async fn governance(
                 )
                 .await?;
             }
-            Ok(Json(serde_json::json!({ "uid": appr_uid, "action": "request_approval" })))
+            Ok(Json(
+                serde_json::json!({ "uid": appr_uid, "action": "request_approval" }),
+            ))
         }
         "resolve_approval" => {
-            let appr_uid = req
-                .approval_uid
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "approval_uid required for resolve_approval", "missing_field"))?;
+            let appr_uid = req.approval_uid.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "approval_uid required for resolve_approval",
+                    "missing_field",
+                )
+            })?;
             let approved = req.approved.unwrap_or(false);
             let current = state
                 .graph
@@ -1805,7 +2005,11 @@ pub(crate) async fn governance(
             let approvals = state.graph.pending_approvals().await.map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(approvals).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown governance action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown governance action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -1877,13 +2081,18 @@ pub(crate) async fn execution(
                     created_edges += 1;
                 }
             }
-            Ok(Json(serde_json::json!({ "uid": uid, "action": "start", "created_edges": created_edges })))
+            Ok(Json(
+                serde_json::json!({ "uid": uid, "action": "start", "created_edges": created_edges }),
+            ))
         }
         "complete" => {
-            let exec_uid = req
-                .execution_uid
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "execution_uid required for complete", "missing_field"))?;
+            let exec_uid = req.execution_uid.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "execution_uid required for complete",
+                    "missing_field",
+                )
+            })?;
             let current = state
                 .graph
                 .get_node(Uid::from(exec_uid.as_str()))
@@ -1915,18 +2124,20 @@ pub(crate) async fn execution(
                 .await
                 .map_err(map_err_500)?;
             if let Some(ref pn_uid) = req.produces_node_uid {
-                create_link(&state, &exec_uid, pn_uid, EdgeType::ProducesNode, &agent_id)
-                    .await?;
+                create_link(&state, &exec_uid, pn_uid, EdgeType::ProducesNode, &agent_id).await?;
             }
             Ok(Json(serde_json::json!({
                 "uid": exec_uid, "action": "complete", "version": updated.version,
             })))
         }
         "fail" => {
-            let exec_uid = req
-                .execution_uid
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "execution_uid required for fail", "missing_field"))?;
+            let exec_uid = req.execution_uid.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "execution_uid required for fail",
+                    "missing_field",
+                )
+            })?;
             let current = state
                 .graph
                 .get_node(Uid::from(exec_uid.as_str()))
@@ -1959,10 +2170,13 @@ pub(crate) async fn execution(
             })))
         }
         "register_agent" => {
-            let name = req
-                .agent_name
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "agent_name required for register_agent", "missing_field"))?;
+            let name = req.agent_name.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "agent_name required for register_agent",
+                    "missing_field",
+                )
+            })?;
             let node = handle
                 .add_node(CreateNode::new(
                     &name,
@@ -1974,7 +2188,9 @@ pub(crate) async fn execution(
                 ))
                 .await
                 .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": node.uid.to_string(), "name": name })))
+            Ok(Json(
+                serde_json::json!({ "uid": node.uid.to_string(), "name": name }),
+            ))
         }
         "get_executions" => {
             let mut filter = NodeFilter::new().node_type(NodeType::Execution);
@@ -1997,7 +2213,11 @@ pub(crate) async fn execution(
             };
             Ok(Json(serde_json::to_value(results).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown execution action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown execution action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -2037,10 +2257,13 @@ pub(crate) async fn retrieve(
 
     match req.action.as_str() {
         "text" => {
-            let query = req
-                .query
-                .clone()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "query required for text mode", "missing_field"))?;
+            let query = req.query.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "query required for text mode",
+                    "missing_field",
+                )
+            })?;
             let mut opts = SearchOptions::new();
             if let Some(ref nts) = req.node_types {
                 if let Some(first) = nts.first() {
@@ -2051,11 +2274,7 @@ pub(crate) async fn retrieve(
                 opts.layer = parse_layer(l);
             }
             opts.limit = Some(limit);
-            let results = state
-                .graph
-                .search(query, opts)
-                .await
-                .map_err(map_err_500)?;
+            let results = state.graph.search(query, opts).await.map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(results).unwrap()))
         }
         "semantic" => {
@@ -2099,12 +2318,20 @@ pub(crate) async fn retrieve(
             Ok(Json(serde_json::to_value(contrs).unwrap()))
         }
         "layer" => {
-            let layer_str = req
-                .layer
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "layer required for layer mode", "missing_field"))?;
-            let layer = parse_layer(layer_str)
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, format!("unknown layer: {layer_str}"), "unknown_action"))?;
+            let layer_str = req.layer.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "layer required for layer mode",
+                    "missing_field",
+                )
+            })?;
+            let layer = parse_layer(layer_str).ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown layer: {layer_str}"),
+                    "unknown_action",
+                )
+            })?;
             let page = state
                 .graph
                 .nodes_in_layer_paginated(layer, Pagination { limit, offset })
@@ -2129,7 +2356,11 @@ pub(crate) async fn retrieve(
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(page).unwrap()))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown retrieve action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown retrieve action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -2196,10 +2427,13 @@ pub(crate) async fn traverse(
             })))
         }
         "path" => {
-            let end_uid = req
-                .end_uid
-                .as_deref()
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "end_uid required for path mode", "missing_field"))?;
+            let end_uid = req.end_uid.as_deref().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "end_uid required for path mode",
+                    "missing_field",
+                )
+            })?;
             let path = state
                 .graph
                 .find_path(start, Uid::from(end_uid), opts)
@@ -2225,7 +2459,11 @@ pub(crate) async fn traverse(
                 "edges": edges,
             })))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown traverse action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown traverse action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -2269,7 +2507,10 @@ pub(crate) async fn evolve(
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let agent_id = resolve_agent_id(req.agent_id);
     let uid = Uid::from(req.uid.as_str());
-    let reason = req.reason.clone().unwrap_or_else(|| "updated via /evolve".into());
+    let reason = req
+        .reason
+        .clone()
+        .unwrap_or_else(|| "updated via /evolve".into());
 
     match req.action.as_str() {
         "update" => {
@@ -2295,13 +2536,14 @@ pub(crate) async fn evolve(
                 let node_type = current.node_type.clone();
                 let mut base = current.props.to_json();
                 // Merge patch into base
-                if let (Some(base_map), Some(patch_obj)) = (base.as_object_mut(), patch.as_object()) {
+                if let (Some(base_map), Some(patch_obj)) = (base.as_object_mut(), patch.as_object())
+                {
                     for (k, v) in patch_obj {
                         base_map.insert(k.clone(), v.clone());
                     }
                 }
-                let rebuilt = mindgraph::NodeProps::from_json(&node_type, &base)
-                    .map_err(map_err_500)?;
+                let rebuilt =
+                    mindgraph::NodeProps::from_json(&node_type, &base).map_err(map_err_500)?;
                 Some(rebuilt)
             } else {
                 None
@@ -2337,16 +2579,16 @@ pub(crate) async fn evolve(
                     .tombstone(uid, reason, agent_id)
                     .await
                     .map_err(map_err_500)?;
-                Ok(Json(serde_json::json!({ "uid": req.uid, "action": "tombstone" })))
+                Ok(Json(
+                    serde_json::json!({ "uid": req.uid, "action": "tombstone" }),
+                ))
             }
         }
         "restore" => {
-            state
-                .graph
-                .restore(uid)
-                .await
-                .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": req.uid, "action": "restore" })))
+            state.graph.restore(uid).await.map_err(map_err_500)?;
+            Ok(Json(
+                serde_json::json!({ "uid": req.uid, "action": "restore" }),
+            ))
         }
         "decay" => {
             let half_life = req.half_life_secs.unwrap_or(86400.0);
@@ -2355,19 +2597,18 @@ pub(crate) async fn evolve(
                 .decay_salience(half_life)
                 .await
                 .map_err(map_err_500)?;
-            let auto_tombstoned = if let (Some(min_sal), Some(min_age)) =
-                (req.min_salience, req.min_age_secs)
-            {
-                Some(
-                    state
-                        .graph
-                        .auto_tombstone(min_sal, min_age)
-                        .await
-                        .map_err(map_err_500)?,
-                )
-            } else {
-                None
-            };
+            let auto_tombstoned =
+                if let (Some(min_sal), Some(min_age)) = (req.min_salience, req.min_age_secs) {
+                    Some(
+                        state
+                            .graph
+                            .auto_tombstone(min_sal, min_age)
+                            .await
+                            .map_err(map_err_500)?,
+                    )
+                } else {
+                    None
+                };
             Ok(Json(serde_json::json!({
                 "nodes_decayed": result.nodes_decayed,
                 "below_threshold": result.below_threshold,
@@ -2375,17 +2616,17 @@ pub(crate) async fn evolve(
             })))
         }
         "history" => {
-            let history = state
-                .graph
-                .node_history(uid)
-                .await
-                .map_err(map_err_500)?;
+            let history = state.graph.node_history(uid).await.map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(history).unwrap()))
         }
         "snapshot" => {
-            let version = req
-                .version
-                .ok_or_else(|| err_with_code(StatusCode::BAD_REQUEST, "version required for snapshot action", "missing_field"))?;
+            let version = req.version.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "version required for snapshot action",
+                    "missing_field",
+                )
+            })?;
             let record = state
                 .graph
                 .node_at_version(uid, version)
@@ -2405,17 +2646,21 @@ pub(crate) async fn evolve(
                 .tombstone_edge(uid, reason, agent_id)
                 .await
                 .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": req.uid, "action": "tombstone_edge" })))
+            Ok(Json(
+                serde_json::json!({ "uid": req.uid, "action": "tombstone_edge" }),
+            ))
         }
         "restore_edge" => {
-            state
-                .graph
-                .restore_edge(uid)
-                .await
-                .map_err(map_err_500)?;
-            Ok(Json(serde_json::json!({ "uid": req.uid, "action": "restore_edge" })))
+            state.graph.restore_edge(uid).await.map_err(map_err_500)?;
+            Ok(Json(
+                serde_json::json!({ "uid": req.uid, "action": "restore_edge" }),
+            ))
         }
-        other => Err(err_with_code(StatusCode::BAD_REQUEST, format!("unknown evolve action: {other}"), "unknown_action")),
+        other => Err(err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("unknown evolve action: {other}"),
+            "unknown_action",
+        )),
     }
 }
 
@@ -2473,7 +2718,14 @@ mod tests {
         let pattern_uid = pattern.uid.to_string();
 
         // Simulate what the handler now does for related_uids.
-        let linked = try_link(&state, &pattern_uid, &concept_uid, EdgeType::RelevantTo, "test").await;
+        let linked = try_link(
+            &state,
+            &pattern_uid,
+            &concept_uid,
+            EdgeType::RelevantTo,
+            "test",
+        )
+        .await;
         assert!(linked, "edge creation should succeed");
 
         // 3. Traverse the neighborhood of the existing concept node.

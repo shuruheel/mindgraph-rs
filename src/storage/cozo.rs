@@ -2149,6 +2149,7 @@ impl CozoStorage {
         let mut params = BTreeMap::new();
         params.insert("uid".into(), str_val(uid.as_str()));
         self.run_script(&script, params)?;
+
         Ok(())
     }
 

@@ -1,9 +1,9 @@
 [workspace]
-members = ["mindgraph-server", "mindgraph-mcp"]
+members = ["mindgraph-server"]
 
 [package]
 name = "mindgraph"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 rust-version = "1.85"
 description = "A structured semantic memory graph for agentic systems"

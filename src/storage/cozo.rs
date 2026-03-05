@@ -3005,6 +3005,10 @@ fn parse_edge_type(s: &str) -> Result<EdgeType> {
         "PRODUCES_NODE" => Ok(EdgeType::ProducesNode),
         "GOVERNED_BY_POLICY" => Ok(EdgeType::GovernedByPolicy),
         "BUDGET_FOR" => Ok(EdgeType::BudgetFor),
+        "WORKS_FOR" => Ok(EdgeType::WorksFor),
+        "AFFILIATED_WITH" => Ok(EdgeType::AffiliatedWith),
+        "ABOUT" => Ok(EdgeType::About),
+        "KNOWN_BY" => Ok(EdgeType::KnownBy),
         other => Ok(EdgeType::Custom(other.to_string())),
     }
 }

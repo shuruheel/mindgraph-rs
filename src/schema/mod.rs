@@ -334,6 +334,12 @@ pub enum EdgeType {
     GovernedByPolicy,
     BudgetFor,
 
+    // Social
+    WorksFor,
+    AffiliatedWith,
+    About,
+    KnownBy,
+
     // Extensible
     Custom(String),
 }
@@ -411,6 +417,10 @@ impl EdgeType {
             EdgeType::ProducesNode => "PRODUCES_NODE",
             EdgeType::GovernedByPolicy => "GOVERNED_BY_POLICY",
             EdgeType::BudgetFor => "BUDGET_FOR",
+            EdgeType::WorksFor => "WORKS_FOR",
+            EdgeType::AffiliatedWith => "AFFILIATED_WITH",
+            EdgeType::About => "ABOUT",
+            EdgeType::KnownBy => "KNOWN_BY",
             EdgeType::Custom(name) => name.as_str(),
         }
     }

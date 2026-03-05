@@ -201,6 +201,12 @@ pub enum EdgeProps {
     GovernedByPolicy {},
     BudgetFor {},
 
+    // Entity relations
+    WorksFor {},
+    AffiliatedWith {},
+    About {},
+    KnownBy {},
+
     // Extensible
     Custom {
         type_name: String,
@@ -282,6 +288,10 @@ impl EdgeProps {
             EdgeProps::ProducesNode { .. } => EdgeType::ProducesNode,
             EdgeProps::GovernedByPolicy { .. } => EdgeType::GovernedByPolicy,
             EdgeProps::BudgetFor { .. } => EdgeType::BudgetFor,
+            EdgeProps::WorksFor { .. } => EdgeType::WorksFor,
+            EdgeProps::AffiliatedWith { .. } => EdgeType::AffiliatedWith,
+            EdgeProps::About { .. } => EdgeType::About,
+            EdgeProps::KnownBy { .. } => EdgeType::KnownBy,
             EdgeProps::Custom { type_name, .. } => EdgeType::Custom(type_name.clone()),
         }
     }
@@ -440,6 +450,10 @@ impl EdgeProps {
             EdgeType::ProducesNode => EdgeProps::ProducesNode {},
             EdgeType::GovernedByPolicy => EdgeProps::GovernedByPolicy {},
             EdgeType::BudgetFor => EdgeProps::BudgetFor {},
+            EdgeType::WorksFor => EdgeProps::WorksFor {},
+            EdgeType::AffiliatedWith => EdgeProps::AffiliatedWith {},
+            EdgeType::About => EdgeProps::About {},
+            EdgeType::KnownBy => EdgeProps::KnownBy {},
             EdgeType::Custom(name) => EdgeProps::Custom {
                 type_name: name,
                 data: serde_json::Value::Object(Default::default()),
@@ -500,6 +514,10 @@ impl EdgeProps {
             EdgeType::ProducesNode => return Ok(EdgeProps::ProducesNode {}),
             EdgeType::GovernedByPolicy => return Ok(EdgeProps::GovernedByPolicy {}),
             EdgeType::BudgetFor => return Ok(EdgeProps::BudgetFor {}),
+            EdgeType::WorksFor => return Ok(EdgeProps::WorksFor {}),
+            EdgeType::AffiliatedWith => return Ok(EdgeProps::AffiliatedWith {}),
+            EdgeType::About => return Ok(EdgeProps::About {}),
+            EdgeType::KnownBy => return Ok(EdgeProps::KnownBy {}),
             _ => {}
         }
 

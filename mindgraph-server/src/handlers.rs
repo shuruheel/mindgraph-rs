@@ -159,11 +159,11 @@ pub(crate) async fn ingest_reality(
     let node = handle.add_node(builder).await.map_err(map_err_500)?;
     let uid = node.uid.to_string();
 
-    // Auto-create ExtractedFrom edge for snippet
+    // Auto-create DerivedFrom edge for snippet
     let mut edges_created = Vec::new();
     if req.action == "snippet" {
         if let Some(src_uid) = &req.source_uid {
-            create_link(&state, &uid, src_uid, EdgeType::ExtractedFrom, &agent_id).await?;
+            create_link(&state, &uid, src_uid, EdgeType::DerivedFrom, &agent_id).await?;
             edges_created.push(src_uid.clone());
         }
     }
@@ -205,6 +205,12 @@ pub(crate) struct ManageEntityRequest {
     pub(crate) limit: Option<u32>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) source_uid: Option<String>,
+    #[serde(default)]
+    pub(crate) target_uid: Option<String>,
+    #[serde(default)]
+    pub(crate) edge_type: Option<String>,
 }
 
 pub(crate) async fn manage_entity(
@@ -332,6 +338,38 @@ pub(crate) async fn manage_entity(
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::to_value(result).unwrap()))
+        }
+        "relate" => {
+            let source_uid = req.source_uid.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "source_uid required for relate",
+                    "missing_field",
+                )
+            })?;
+            let target_uid = req.target_uid.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "target_uid required for relate",
+                    "missing_field",
+                )
+            })?;
+            let edge_type_str = req.edge_type.ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "edge_type required for relate",
+                    "missing_field",
+                )
+            })?;
+            let edge_type = parse_edge_type(&edge_type_str);
+            let edge_uid =
+                create_link(&state, &source_uid, &target_uid, edge_type, &agent_id).await?;
+            Ok(Json(serde_json::json!({
+                "uid": edge_uid,
+                "edge_type": edge_type_str,
+                "source_uid": source_uid,
+                "target_uid": target_uid,
+            })))
         }
         other => Err(err_with_code(
             StatusCode::BAD_REQUEST,
@@ -2077,7 +2115,7 @@ pub(crate) async fn execution(
             }
             let mut created_edges: u32 = 0;
             for rel_uid in req.related_uids.iter().flatten() {
-                if try_link(&state, &uid, rel_uid, EdgeType::RelevantTo, &agent_id).await {
+                if try_link(&state, &uid, rel_uid, EdgeType::Targets, &agent_id).await {
                     created_edges += 1;
                 }
             }

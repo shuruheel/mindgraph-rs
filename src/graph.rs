@@ -1157,7 +1157,11 @@ impl MindGraph {
             .into_values()
             .filter_map(|(score, node)| node.map(|n| SearchResult { node: n, score }))
             .collect();
-        fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        fused.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         fused.truncate(limit);
 
         Ok(fused)

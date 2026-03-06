@@ -3683,7 +3683,9 @@ fn test_hybrid_search_fts_fallback() {
 
     assert!(!results.is_empty(), "hybrid search should find FTS results");
     assert!(
-        results.iter().any(|r| r.node.label.contains("Machine learning")),
+        results
+            .iter()
+            .any(|r| r.node.label.contains("Machine learning")),
         "should find node with 'neural networks' in props content"
     );
 }

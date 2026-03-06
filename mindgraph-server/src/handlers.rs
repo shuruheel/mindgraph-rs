@@ -5,14 +5,15 @@ use axum::{extract::State, http::StatusCode, Json};
 use mindgraph::{
     now, AffordanceProps, AgentProps, AnalogyProps, AnomalyProps, ApprovalProps, ArgumentProps,
     AssumptionProps, ClaimProps, ConceptProps, Confidence, ConstraintProps, ControlProps,
-    CreateNode, DecisionProps, Direction, EdgeType, EvidenceProps, ExecutionProps, FlowProps,
-    FlowStepProps, GoalProps, HypothesisProps, InferenceChainProps, JournalProps, MechanismProps,
-    MemoryPolicyProps, MilestoneProps, ModelEvaluationProps, ModelProps, NodeFilter, NodeProps,
-    NodeType, ObservationProps, OpenQuestionProps, OptionProps, Pagination, ParadigmProps,
-    PatternProps, PlanProps, PlanStepProps, PolicyProps, ProjectProps, QuestionProps,
+    CreateNode, DecisionProps, Direction, EdgeType, EvidenceProps, ExecutionProps,
+    ExperimentProps, FlowProps, FlowStepProps, GoalProps, HypothesisProps, InferenceChainProps,
+    JournalProps, MechanismProps, MemoryPolicyProps, MethodProps, MilestoneProps,
+    ModelEvaluationProps, ModelProps, NodeFilter, NodeProps, NodeType, ObservationProps,
+    OpenQuestionProps, OptionProps, Pagination, ParadigmProps, PatternProps, PlanProps,
+    PlanStepProps, PolicyProps, PreferenceProps, ProjectProps, QuestionProps,
     ReasoningStrategyProps, RiskAssessmentProps, SafetyBudgetProps, Salience, SearchOptions,
-    SensitivityAnalysisProps, SnippetProps, SourceProps, SummaryProps, TaskProps, TheoremProps,
-    TheoryProps, TraceProps, TraversalOptions, Uid, WarrantProps,
+    SensitivityAnalysisProps, SessionProps, SnippetProps, SourceProps, SummaryProps, TaskProps,
+    TheoremProps, TheoryProps, TraceProps, TraversalOptions, Uid, WarrantProps,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -68,6 +69,34 @@ async fn try_link(
     }
 }
 
+/// Merge user-provided props JSON into a handler-constructed NodeProps.
+/// The user's values override the handler's defaults, allowing full control
+/// over any property of the node type.
+fn merge_props(
+    base: NodeProps,
+    user_props: Option<serde_json::Value>,
+) -> Result<NodeProps, (StatusCode, Json<ErrorResponse>)> {
+    let user = match user_props {
+        Some(v) if v.is_object() && !v.as_object().map_or(true, |m| m.is_empty()) => v,
+        _ => return Ok(base),
+    };
+    let node_type = base.node_type();
+    let mut base_json = base.to_json();
+    // Deep-merge: user values override base values
+    if let (Some(base_obj), Some(user_obj)) = (base_json.as_object_mut(), user.as_object()) {
+        for (k, v) in user_obj {
+            base_obj.insert(k.clone(), v.clone());
+        }
+    }
+    NodeProps::from_json(&node_type, &base_json).map_err(|e| {
+        err_with_code(
+            StatusCode::BAD_REQUEST,
+            format!("invalid props: {e}"),
+            "invalid_props",
+        )
+    })
+}
+
 fn resolve_agent_id(id: Option<String>) -> String {
     match id {
         Some(id) if !id.is_empty() => id,
@@ -105,6 +134,8 @@ pub(crate) struct IngestRequest {
     pub(crate) salience: Option<f64>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn ingest_reality(
@@ -148,6 +179,7 @@ pub(crate) async fn ingest_reality(
         }
     };
 
+    let props = merge_props(props, req.props.clone())?;
     let mut builder = CreateNode::new(&req.label, props).summary(&req.content);
     if let Some(c) = req.confidence {
         builder = builder.confidence(Confidence::new(c).map_err(map_err_500)?);
@@ -423,6 +455,8 @@ pub(crate) struct ArgumentRequest {
     pub(crate) source_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn argument(
@@ -433,14 +467,15 @@ pub(crate) async fn argument(
     let handle = state.graph.agent(&agent_id);
 
     // 1. Create Claim node
-    let mut claim_builder = CreateNode::new(
-        &req.claim.label,
+    let claim_props = merge_props(
         NodeProps::Claim(ClaimProps {
             content: req.claim.content.clone(),
             ..Default::default()
         }),
-    )
-    .summary(&req.claim.content);
+        req.props.clone(),
+    )?;
+    let mut claim_builder = CreateNode::new(&req.claim.label, claim_props)
+        .summary(&req.claim.content);
     if let Some(c) = req.claim.confidence {
         claim_builder = claim_builder.confidence(Confidence::new(c).map_err(map_err_500)?);
     }
@@ -578,6 +613,8 @@ pub(crate) struct InquiryRequest {
     pub(crate) related_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn inquiry(
@@ -631,6 +668,7 @@ pub(crate) async fn inquiry(
         }
     };
 
+    let props = merge_props(props, req.props.clone())?;
     let mut builder = CreateNode::new(&req.label, props).summary(&req.content);
     if let Some(c) = req.confidence {
         builder = builder.confidence(Confidence::new(c).map_err(map_err_500)?);
@@ -709,6 +747,8 @@ pub(crate) struct StructureRequest {
     pub(crate) confidence: Option<f64>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn structure(
@@ -768,6 +808,16 @@ pub(crate) async fn structure(
             expression: req.content.clone(),
             ..Default::default()
         }),
+        "method" => NodeProps::Method(MethodProps {
+            name: req.label.clone(),
+            description: req.content.clone(),
+            ..Default::default()
+        }),
+        "experiment" => NodeProps::Experiment(ExperimentProps {
+            description: req.content.clone(),
+            name: Some(req.label.clone()),
+            ..Default::default()
+        }),
         other => {
             return Err(err_with_code(
                 StatusCode::BAD_REQUEST,
@@ -777,6 +827,7 @@ pub(crate) async fn structure(
         }
     };
 
+    let props = merge_props(props, req.props.clone())?;
     let mut builder = CreateNode::new(&req.label, props).summary(&summary_text);
     if let Some(c) = req.confidence {
         builder = builder.confidence(Confidence::new(c).map_err(map_err_500)?);
@@ -851,6 +902,8 @@ pub(crate) struct CommitmentRequest {
     pub(crate) motivated_by_uid: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn commitment(
@@ -888,6 +941,7 @@ pub(crate) async fn commitment(
         }
     };
 
+    let props = merge_props(props, req.props.clone())?;
     let node = handle
         .add_node(CreateNode::new(&req.label, props).summary(&req.description))
         .await
@@ -934,6 +988,8 @@ pub(crate) struct DeliberationRequest {
     pub(crate) informs_uid: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn deliberation(
@@ -953,15 +1009,16 @@ pub(crate) async fn deliberation(
                 )
             })?;
             let desc = req.description.clone().unwrap_or_default();
+            let decision_props = merge_props(
+                NodeProps::Decision(DecisionProps {
+                    question: desc.clone(),
+                    status: Some("open".into()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Decision(DecisionProps {
-                        question: desc.clone(),
-                        status: Some("open".into()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, decision_props))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::json!({
@@ -986,14 +1043,15 @@ pub(crate) async fn deliberation(
                 )
             })?;
             let desc = req.description.clone().unwrap_or_default();
+            let option_props = merge_props(
+                NodeProps::Option(OptionProps {
+                    description: desc,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let opt_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Option(OptionProps {
-                        description: desc,
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, option_props))
                 .await
                 .map_err(map_err_500)?;
             let opt_uid = opt_node.uid.to_string();
@@ -1025,15 +1083,16 @@ pub(crate) async fn deliberation(
                 )
             })?;
             let desc = req.description.clone().unwrap_or_default();
+            let constraint_props = merge_props(
+                NodeProps::Constraint(ConstraintProps {
+                    description: desc,
+                    constraint_type: req.constraint_type.clone(),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let con_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Constraint(ConstraintProps {
-                        description: desc,
-                        constraint_type: req.constraint_type.clone(),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, constraint_props))
                 .await
                 .map_err(map_err_500)?;
             let con_uid = con_node.uid.to_string();
@@ -1148,6 +1207,8 @@ pub(crate) struct ProcedureRequest {
     pub(crate) goal_uid: Option<String>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn procedure(
@@ -1160,15 +1221,16 @@ pub(crate) async fn procedure(
 
     match req.action.as_str() {
         "create_flow" => {
+            let flow_props = merge_props(
+                NodeProps::Flow(FlowProps {
+                    name: req.label.clone(),
+                    description: desc.clone(),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &req.label,
-                    NodeProps::Flow(FlowProps {
-                        name: req.label.clone(),
-                        description: desc.clone(),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&req.label, flow_props))
                 .await
                 .map_err(map_err_500)?;
             let uid = node.uid.to_string();
@@ -1188,15 +1250,16 @@ pub(crate) async fn procedure(
                 )
             })?;
             let order = req.step_order.unwrap_or(0);
+            let step_props = merge_props(
+                NodeProps::FlowStep(FlowStepProps {
+                    order,
+                    description: desc,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let step_node = handle
-                .add_node(CreateNode::new(
-                    &req.label,
-                    NodeProps::FlowStep(FlowStepProps {
-                        order,
-                        description: desc,
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&req.label, step_props))
                 .await
                 .map_err(map_err_500)?;
             let step_uid = step_node.uid.to_string();
@@ -1215,16 +1278,17 @@ pub(crate) async fn procedure(
             })))
         }
         "add_affordance" => {
+            let affordance_props = merge_props(
+                NodeProps::Affordance(AffordanceProps {
+                    action_name: req.label.clone(),
+                    description: desc,
+                    affordance_type: req.affordance_type.clone(),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &req.label,
-                    NodeProps::Affordance(AffordanceProps {
-                        action_name: req.label.clone(),
-                        description: desc,
-                        affordance_type: req.affordance_type.clone(),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&req.label, affordance_props))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::json!({
@@ -1236,15 +1300,16 @@ pub(crate) async fn procedure(
                 .control_type
                 .clone()
                 .unwrap_or_else(|| "conditional".into());
+            let control_props = merge_props(
+                NodeProps::Control(ControlProps {
+                    control_type: ctype,
+                    label: Some(req.label.clone()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let ctrl_node = handle
-                .add_node(CreateNode::new(
-                    &req.label,
-                    NodeProps::Control(ControlProps {
-                        control_type: ctype,
-                        label: Some(req.label.clone()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&req.label, control_props))
                 .await
                 .map_err(map_err_500)?;
             let ctrl_uid = ctrl_node.uid.to_string();
@@ -1288,6 +1353,8 @@ pub(crate) struct RiskRequest {
     pub(crate) filter_uid: Option<String>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn risk(
@@ -1307,20 +1374,21 @@ pub(crate) async fn risk(
             let residual = req.residual_risk.unwrap_or(0.0);
             let conf = Confidence::new((1.0 - residual).clamp(0.0, 1.0)).map_err(map_err_500)?;
             let mitigation_str = req.mitigations.as_ref().map(|v| v.join("; "));
+            let risk_props = merge_props(
+                NodeProps::RiskAssessment(RiskAssessmentProps {
+                    target_uid: req.assessed_uid.clone(),
+                    severity: req.severity.clone(),
+                    likelihood: req.likelihood,
+                    mitigation: mitigation_str,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let ra_node = handle
                 .add_node(
-                    CreateNode::new(
-                        &label,
-                        NodeProps::RiskAssessment(RiskAssessmentProps {
-                            target_uid: req.assessed_uid.clone(),
-                            severity: req.severity.clone(),
-                            likelihood: req.likelihood,
-                            mitigation: mitigation_str,
-                            ..Default::default()
-                        }),
-                    )
-                    .confidence(conf)
-                    .summary(&summary),
+                    CreateNode::new(&label, risk_props)
+                        .confidence(conf)
+                        .summary(&summary),
                 )
                 .await
                 .map_err(map_err_500)?;
@@ -1388,6 +1456,8 @@ pub(crate) struct SessionOpRequest {
     pub(crate) tags: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn session_op(
@@ -1401,8 +1471,15 @@ pub(crate) async fn session_op(
         "open" => {
             let label = req.label.clone().unwrap_or_else(|| "Session".into());
             let focus = req.focus.clone().unwrap_or_default();
+            let session_props = merge_props(
+                NodeProps::Session(SessionProps {
+                    focus_summary: Some(focus.clone()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_session(label.clone(), focus.clone())
+                .add_node(CreateNode::new(&label, session_props).summary(&focus))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(serde_json::json!({
@@ -1420,15 +1497,16 @@ pub(crate) async fn session_op(
                 )
             })?;
             let content = req.trace_content.clone().unwrap_or_default();
+            let trace_props = merge_props(
+                NodeProps::Trace(TraceProps {
+                    session_uid: Some(sess_uid.to_string()),
+                    trace_type: req.trace_type.clone(),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let trace_node = handle
-                .add_node(CreateNode::new(
-                    &content,
-                    NodeProps::Trace(TraceProps {
-                        session_uid: Some(sess_uid.to_string()),
-                        trace_type: req.trace_type.clone(),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&content, trace_props))
                 .await
                 .map_err(map_err_500)?;
             let trace_uid = trace_node.uid.to_string();
@@ -1493,16 +1571,17 @@ pub(crate) async fn session_op(
         "journal" => {
             let label = req.label.clone().unwrap_or_else(|| "Journal".into());
             let content = req.content.clone().unwrap_or_default();
+            let journal_props = merge_props(
+                NodeProps::Journal(JournalProps {
+                    content: content.clone(),
+                    session_uid: req.session_uid.clone(),
+                    journal_type: req.journal_type.clone(),
+                    tags: req.tags.clone().unwrap_or_default(),
+                }),
+                req.props.clone(),
+            )?;
             let journal_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Journal(JournalProps {
-                        content: content.clone(),
-                        session_uid: req.session_uid.clone(),
-                        journal_type: req.journal_type.clone(),
-                        tags: req.tags.clone().unwrap_or_default(),
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, journal_props))
                 .await
                 .map_err(map_err_500)?;
             let journal_uid = journal_node.uid.to_string();
@@ -1551,6 +1630,8 @@ pub(crate) struct DistillRequest {
     pub(crate) importance: Option<f64>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn distill(
@@ -1562,15 +1643,15 @@ pub(crate) async fn distill(
 
     let source_uids = req.summarizes_uids.clone().unwrap_or_default();
 
-    let mut builder = CreateNode::new(
-        &req.label,
+    let summary_props = merge_props(
         NodeProps::Summary(SummaryProps {
             content: req.content.clone(),
             source_node_uids: source_uids,
             ..Default::default()
         }),
-    )
-    .summary(&req.content);
+        req.props.clone(),
+    )?;
+    let mut builder = CreateNode::new(&req.label, summary_props).summary(&req.content);
 
     if let Some(imp) = req.importance {
         builder = builder.salience(Salience::new(imp.clamp(0.0, 1.0)).map_err(map_err_500)?);
@@ -1609,6 +1690,8 @@ pub(crate) struct MemoryConfigRequest {
     pub(crate) policy_content: Option<String>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn memory_config(
@@ -1641,8 +1724,16 @@ pub(crate) async fn memory_config(
                     "missing_field",
                 )
             })?;
+            let pref_props = merge_props(
+                NodeProps::Preference(PreferenceProps {
+                    key,
+                    value,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_preference(label.clone(), key, value)
+                .add_node(CreateNode::new(&label, pref_props))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(
@@ -1658,15 +1749,16 @@ pub(crate) async fn memory_config(
                 )
             })?;
             let content = req.policy_content.clone().unwrap_or_default();
+            let policy_props = merge_props(
+                NodeProps::MemoryPolicy(MemoryPolicyProps {
+                    condition: Some(content),
+                    active: true,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::MemoryPolicy(MemoryPolicyProps {
-                        condition: Some(content),
-                        active: true,
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, policy_props))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(
@@ -1726,6 +1818,8 @@ pub(crate) struct AgentPlanRequest {
     pub(crate) related_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn agent_plan(
@@ -1739,15 +1833,16 @@ pub(crate) async fn agent_plan(
         "create_task" => {
             let label = req.label.clone().unwrap_or_else(|| "Task".into());
             let desc = req.description.clone().unwrap_or_default();
+            let task_props = merge_props(
+                NodeProps::Task(TaskProps {
+                    description: desc,
+                    status: Some("pending".into()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Task(TaskProps {
-                        description: desc,
-                        status: Some("pending".into()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, task_props))
                 .await
                 .map_err(map_err_500)?;
             let uid = node.uid.to_string();
@@ -1767,16 +1862,17 @@ pub(crate) async fn agent_plan(
         "create_plan" => {
             let label = req.label.clone().unwrap_or_else(|| "Plan".into());
             let desc = req.description.clone().unwrap_or_default();
+            let plan_props = merge_props(
+                NodeProps::Plan(PlanProps {
+                    description: desc,
+                    task_uid: req.task_uid.clone(),
+                    status: Some("pending".into()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let plan_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Plan(PlanProps {
-                        description: desc,
-                        task_uid: req.task_uid.clone(),
-                        status: Some("pending".into()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, plan_props))
                 .await
                 .map_err(map_err_500)?;
             let uid = plan_node.uid.to_string();
@@ -1807,17 +1903,18 @@ pub(crate) async fn agent_plan(
             let label = req.label.clone().unwrap_or_else(|| "Step".into());
             let desc = req.description.clone().unwrap_or_default();
             let order = req.step_order.unwrap_or(0);
+            let step_props = merge_props(
+                NodeProps::PlanStep(PlanStepProps {
+                    order,
+                    description: desc,
+                    plan_uid: Some(plan_uid.to_string()),
+                    status: Some("pending".into()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let step_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::PlanStep(PlanStepProps {
-                        order,
-                        description: desc,
-                        plan_uid: Some(plan_uid.to_string()),
-                        status: Some("pending".into()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, step_props))
                 .await
                 .map_err(map_err_500)?;
             let step_uid = step_node.uid.to_string();
@@ -1945,6 +2042,8 @@ pub(crate) struct GovernanceRequest {
     pub(crate) approval_request: Option<String>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn governance(
@@ -1964,16 +2063,17 @@ pub(crate) async fn governance(
                 )
             })?;
             let content = req.policy_content.clone().unwrap_or_default();
+            let policy_props = merge_props(
+                NodeProps::Policy(PolicyProps {
+                    name: label.clone(),
+                    description: content,
+                    active: true,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Policy(PolicyProps {
-                        name: label.clone(),
-                        description: content,
-                        active: true,
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, policy_props))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(
@@ -1983,16 +2083,17 @@ pub(crate) async fn governance(
         "set_budget" => {
             let label = req.label.clone().unwrap_or_else(|| "Safety Budget".into());
             let limit = req.budget_limit.unwrap_or(100.0);
+            let budget_props = merge_props(
+                NodeProps::SafetyBudget(SafetyBudgetProps {
+                    budget_type: req.budget_type.clone(),
+                    limit,
+                    remaining: limit,
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::SafetyBudget(SafetyBudgetProps {
-                        budget_type: req.budget_type.clone(),
-                        limit,
-                        remaining: limit,
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, budget_props))
                 .await
                 .map_err(map_err_500)?;
             let uid = node.uid.to_string();
@@ -2007,16 +2108,17 @@ pub(crate) async fn governance(
                 .clone()
                 .or_else(|| req.label.clone())
                 .unwrap_or_else(|| "Approval Request".into());
+            let approval_props = merge_props(
+                NodeProps::Approval(ApprovalProps {
+                    target_uid: req.governed_uid.clone(),
+                    status: Some("pending".into()),
+                    requested_at: Some(now()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let appr_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Approval(ApprovalProps {
-                        target_uid: req.governed_uid.clone(),
-                        status: Some("pending".into()),
-                        requested_at: Some(now()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, approval_props))
                 .await
                 .map_err(map_err_500)?;
             let appr_uid = appr_node.uid.to_string();
@@ -2120,6 +2222,8 @@ pub(crate) struct ExecutionRequest {
     pub(crate) related_uids: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn execution(
@@ -2132,16 +2236,17 @@ pub(crate) async fn execution(
     match req.action.as_str() {
         "start" => {
             let label = req.label.clone().unwrap_or_else(|| "Execution".into());
+            let exec_props = merge_props(
+                NodeProps::Execution(ExecutionProps {
+                    description: label.clone(),
+                    status: Some("running".into()),
+                    started_at: Some(now()),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let exec_node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Execution(ExecutionProps {
-                        description: label.clone(),
-                        status: Some("running".into()),
-                        started_at: Some(now()),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&label, exec_props))
                 .await
                 .map_err(map_err_500)?;
             let uid = exec_node.uid.to_string();
@@ -2253,15 +2358,16 @@ pub(crate) async fn execution(
                     "missing_field",
                 )
             })?;
+            let agent_props = merge_props(
+                NodeProps::Agent(AgentProps {
+                    name: name.clone(),
+                    agent_type: req.agent_role.clone(),
+                    ..Default::default()
+                }),
+                req.props.clone(),
+            )?;
             let node = handle
-                .add_node(CreateNode::new(
-                    &name,
-                    NodeProps::Agent(AgentProps {
-                        name: name.clone(),
-                        agent_type: req.agent_role.clone(),
-                        ..Default::default()
-                    }),
-                ))
+                .add_node(CreateNode::new(&name, agent_props))
                 .await
                 .map_err(map_err_500)?;
             Ok(Json(

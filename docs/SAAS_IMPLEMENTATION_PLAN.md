@@ -482,47 +482,52 @@ dashboard/                             (private repo or monorepo with cloud)
 
 ---
 
-## Phase 0.5: Library Hardening (before Cloud launch)
+## Phase 0.5: Library Hardening (DONE)
 
-Lessons from real-world usage with OpenClaw. These are library-level fixes in `mindgraph` and `mindgraph-server` that apply to both standalone and cloud.
+Lessons from real-world usage with OpenClaw. Library-level fixes in `mindgraph` and `mindgraph-server` that apply to both standalone and cloud.
 
 See `docs/DESIGN_LESSONS_ANALYSIS.md` for the full analysis.
 
-### 0.5.1 Write reliability — no silent failures
-- Server-side validation in `/evolve` handler: compare `props_patch` keys against known fields for the node type, return 422 with unknown field names
-- All mutation endpoints return the resulting node/edge state, not just an ack
-- Integration tests on every node type's props_patch path
+### 0.5.1 Write reliability — no silent failures (DONE)
+- `NodeProps::validate_patch(node_type, patch)` validates props_patch keys against known fields, returns unknown field names
+- `NodeProps::known_fields_for_type(node_type)` discovers valid fields by serializing a default instance
+- Server-side validation in `/evolve` handler returns 422 with unknown field names and lists valid fields
+- Integration tests: `test_validate_patch_known_fields`, `test_validate_patch_claim_fields`
 
-### 0.5.2 Full-content FTS via `search_text` column
-- Add `search_text: String` column to `node` relation (schema migration)
-- On node create/update, concatenate `label + summary + props.content/description/principle/etc.` into this field
-- Replace two FTS indexes (`label_fts`, `summary_fts`) with one on `search_text`
-- Backfill existing nodes on migration
+### 0.5.2 Full-content FTS via `node_search` relation (DONE)
+- Separate `node_search { uid => search_text }` relation with FTS index (avoids breaking 18+ positional `*node[...]` queries)
+- `NodeProps::search_text()` extracts text from 35+ string fields and 43+ Vec<String> fields across all 52 node types
+- `CozoStorage::upsert_search_text()` called on node create/update, batch insert
+- `query_fts_search()` unions results from `node_search:search_text_fts` with existing label/summary FTS
+- `purge_tombstoned()` and `export_all()` updated for new relation
+- Integration tests: `test_fts_searches_props_content`, `test_search_text_extraction`
 
-### 0.5.3 Entity dedup at creation time
-- Add `find_or_create_entity()` method to `MindGraph`:
-  1. Fuzzy-search aliases for the label
-  2. If match >= 0.8, return existing entity UID
+### 0.5.3 Entity dedup at creation time (DONE)
+- `MindGraph::find_or_create_entity(label, entity_type)` returns `(GraphNode, bool)`:
+  1. Exact alias resolution via `resolve_alias()`
+  2. Case-insensitive label search among live Entity nodes
   3. If no match, create new entity + register label as alias
-- Wire into `/reality/entity` handler's `create` action
-- Upsert semantics only for: Entity (by canonical_name), Preference (by key), MemoryPolicy (by policy_name)
+- Available on `MindGraph`, `AsyncMindGraph`, `AgentHandle`, `AsyncAgentHandle`
+- Integration test: `test_find_or_create_entity_dedup`
 
-### 0.5.4 Hybrid retrieval (BM25 + vector ranked fusion)
-- Add `hybrid_search(query_text, query_vec, k)` method to `MindGraph`
-- Reciprocal Rank Fusion: `score = sum(1 / (60 + rank_i))` across FTS and HNSW result lists
-- Deduplicate by uid, return top-k
-- Wire into `/retrieve` handler as `mode: "hybrid"` action
+### 0.5.4 Hybrid retrieval (BM25 + vector ranked fusion) (DONE)
+- `MindGraph::hybrid_search(query, query_vec, limit, opts)` with Reciprocal Rank Fusion (k=60)
+- Falls back to FTS-only when no embedding provider is configured
+- Available on `MindGraph` and `AsyncMindGraph`
+- Integration test: `test_hybrid_search_fts_fallback`
 
-### 0.5.5 Session-anchored temporality
-- Add agent-scoped "active session" tracking (meta key per agent)
-- When a session is active, all nodes created by that agent auto-get a `CAPTURED_IN` edge to the session
-- Add `FOLLOWS` edge type for sequencing within investigations
-- Add `GET /timeline` endpoint: query nodes by `created_at` range, grouped by session
+### 0.5.5 Follows edge type (DONE)
+- Added `EdgeType::Follows` with `"FOLLOWS"` storage string
+- Added `EdgeProps::Follows {}` variant with `default_for()` and `from_json()` support
+- Parser updated to handle `"FOLLOWS"` from storage
+- Session-anchored auto-edges and `/timeline` endpoint deferred to cloud phase
 
-### 0.5.6 Journal node type for narrative
-- Add `Journal` node type (Memory layer) with `JournalProps { content: String, format: String }`
-- FTS indexes journal content via the `search_text` column
-- Optional: auto-extract named entities from journal prose, create `MENTIONED_IN` edges to existing entities
+### 0.5.6 Journal node type for narrative (DONE)
+- Added `NodeType::Journal` (Memory layer) with `JournalProps { content, session_uid, journal_type, tags }`
+- `NodeProps::Journal(JournalProps)` variant with full ser/de support
+- Journal content indexed via `search_text()` extraction
+- Parser updated to handle `"Journal"` from storage
+- Auto-entity extraction from journal prose deferred
 
 ---
 
@@ -531,7 +536,7 @@ See `docs/DESIGN_LESSONS_ANALYSIS.md` for the full analysis.
 | Order | Phase | Deliverable |
 |---|---|---|
 | 1 | Phase 0 | Extract handlers into lib.rs, GraphProvider trait (DONE) |
-| 2 | Phase 0.5 | Library hardening: write reliability, full-content FTS, entity dedup, hybrid search |
+| 2 | Phase 0.5 | Library hardening: write validation, full-content FTS, entity dedup, hybrid search, Follows edge, Journal type (DONE) |
 | 3 | Phase 1 | Supabase schema, auth, org support, API keys, management endpoints |
 | 4 | Phase 2 | TenantGraphPool, data isolation, embedding proxy |
 | 5 | Phase 3 | Stripe billing, plan enforcement |

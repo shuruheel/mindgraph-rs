@@ -268,6 +268,16 @@ impl AgentHandle {
         ))
     }
 
+    /// Find an existing entity by alias/label match, or create a new one.
+    /// Returns `(node, created)`.
+    pub fn find_or_create_entity(
+        &self,
+        label: &str,
+        entity_type: &str,
+    ) -> Result<(GraphNode, bool)> {
+        self.graph.find_or_create_entity(label, entity_type)
+    }
+
     /// Add a goal node.
     pub fn add_goal(&self, label: &str, priority: &str) -> Result<GraphNode> {
         use crate::schema::props::intent::GoalProps;

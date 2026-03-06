@@ -3,6 +3,14 @@ name = "mindgraph-server"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "mindgraph_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mindgraph-server"
+path = "src/main.rs"
+
 [dependencies]
 mindgraph = { path = "..", features = ["async"] }
 axum = "0.8"

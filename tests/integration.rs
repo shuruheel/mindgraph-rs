@@ -3645,3 +3645,171 @@ fn test_custom_props_returns_result() {
     let result: Option<MyType> = entity.custom_props().unwrap();
     assert!(result.is_none());
 }
+
+#[test]
+fn test_hybrid_search_fts_fallback() {
+    let g = mem_graph();
+
+    g.add_node(CreateNode::new(
+        "Machine learning overview",
+        NodeProps::Claim(ClaimProps {
+            content: "Neural networks are universal function approximators".into(),
+            ..Default::default()
+        }),
+    ))
+    .unwrap();
+
+    g.add_node(CreateNode::new(
+        "Deep learning basics",
+        NodeProps::Observation(ObservationProps {
+            content: "Gradient descent optimizes neural network parameters".into(),
+            ..Default::default()
+        }),
+    ))
+    .unwrap();
+
+    // Hybrid search without embeddings falls back to FTS
+    let results = g
+        .hybrid_search(
+            "neural networks",
+            None,
+            10,
+            &SearchOptions {
+                search_summary: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    assert!(!results.is_empty(), "hybrid search should find FTS results");
+    assert!(
+        results.iter().any(|r| r.node.label.contains("Machine learning")),
+        "should find node with 'neural networks' in props content"
+    );
+}
+
+#[test]
+fn test_find_or_create_entity_dedup() {
+    let g = mem_graph();
+
+    // First call creates the entity
+    let (entity1, created1) = g.find_or_create_entity("Aaron Goh", "person").unwrap();
+    assert!(created1);
+    assert_eq!(entity1.label, "Aaron Goh");
+
+    // Second call with same name returns the existing entity
+    let (entity2, created2) = g.find_or_create_entity("Aaron Goh", "person").unwrap();
+    assert!(!created2);
+    assert_eq!(entity2.uid, entity1.uid);
+
+    // Case-insensitive match also deduplicates
+    let (entity3, created3) = g.find_or_create_entity("aaron goh", "person").unwrap();
+    assert!(!created3);
+    assert_eq!(entity3.uid, entity1.uid);
+
+    // Different name creates a new entity
+    let (entity4, created4) = g.find_or_create_entity("Bob Smith", "person").unwrap();
+    assert!(created4);
+    assert_ne!(entity4.uid, entity1.uid);
+}
+
+#[test]
+fn test_validate_patch_known_fields() {
+    // Entity has fields like canonical_name, description, entity_type, aliases
+    let known = NodeProps::known_fields_for_type(&NodeType::Entity);
+    assert!(known.contains("canonical_name"));
+    assert!(known.contains("description"));
+    assert!(known.contains("entity_type"));
+    assert!(!known.contains("nonexistent_field"));
+
+    // Valid patch: all keys exist
+    let patch = serde_json::json!({"description": "updated"});
+    assert!(NodeProps::validate_patch(&NodeType::Entity, &patch).is_ok());
+
+    // Invalid patch: unknown key
+    let bad_patch = serde_json::json!({"contnet": "typo"});
+    let err = NodeProps::validate_patch(&NodeType::Entity, &bad_patch).unwrap_err();
+    assert_eq!(err, vec!["contnet".to_string()]);
+
+    // Custom types always pass
+    let custom_type = NodeType::Custom("MyType".into());
+    let any_patch = serde_json::json!({"anything": "goes"});
+    assert!(NodeProps::validate_patch(&custom_type, &any_patch).is_ok());
+}
+
+#[test]
+fn test_fts_searches_props_content() {
+    let g = mem_graph();
+
+    // Create an observation with content that includes a specific phrase
+    let obs = g
+        .add_node(CreateNode::new(
+            "Meeting note",
+            NodeProps::Observation(ObservationProps {
+                content: "Aaron Goh discussed the quarterly budget allocation".into(),
+                ..Default::default()
+            }),
+        ))
+        .unwrap();
+
+    // FTS should find this node when searching for content in props
+    let results = g
+        .search(
+            "Aaron Goh",
+            &SearchOptions {
+                limit: Some(10),
+                search_summary: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    assert!(
+        results.iter().any(|r| r.node.uid == obs.uid),
+        "FTS should find node by props.content text; got {} results: {:?}",
+        results.len(),
+        results.iter().map(|r| &r.node.label).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_search_text_extraction() {
+    // Verify search_text pulls relevant fields
+    let props = NodeProps::Entity(EntityProps {
+        canonical_name: "Aaron Goh".into(),
+        description: Some("Software engineer at Acme Corp".into()),
+        ..Default::default()
+    });
+    let text = props.search_text();
+    assert!(text.contains("Aaron Goh"));
+    assert!(text.contains("Software engineer at Acme Corp"));
+
+    // Claim should extract content
+    let claim_props = NodeProps::Claim(ClaimProps {
+        content: "The quarterly budget is 1.2M".into(),
+        ..Default::default()
+    });
+    let text = claim_props.search_text();
+    assert!(text.contains("quarterly budget"));
+
+    // Hypothesis should extract statement
+    let hyp_props = NodeProps::Hypothesis(HypothesisProps {
+        statement: "Revenue will increase by 20%".into(),
+        predicted_observations: vec!["Q3 sales up".into(), "New customers".into()],
+        ..Default::default()
+    });
+    let text = hyp_props.search_text();
+    assert!(text.contains("Revenue will increase"));
+    assert!(text.contains("Q3 sales up"));
+    assert!(text.contains("New customers"));
+}
+
+#[test]
+fn test_validate_patch_claim_fields() {
+    let known = NodeProps::known_fields_for_type(&NodeType::Claim);
+    assert!(known.contains("content"));
+    // "description" is NOT a Claim field
+    let bad = serde_json::json!({"description": "wrong field"});
+    let err = NodeProps::validate_patch(&NodeType::Claim, &bad).unwrap_err();
+    assert!(err.contains(&"description".to_string()));
+}

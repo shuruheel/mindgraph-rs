@@ -229,18 +229,13 @@ pub(crate) async fn manage_entity(
             })?;
             let entity_type = req.entity_type.unwrap_or_else(|| "other".into());
             let handle = state.graph.agent(&agent_id);
-            let node = handle
-                .add_node(CreateNode::new(
-                    &label,
-                    NodeProps::Entity(mindgraph::EntityProps {
-                        entity_type,
-                        canonical_name: label.clone(),
-                        ..Default::default()
-                    }),
-                ))
+            let (node, created) = handle
+                .find_or_create_entity(label, entity_type)
                 .await
                 .map_err(map_err_500)?;
-            Ok(Json(serde_json::to_value(node).unwrap()))
+            let mut result = serde_json::to_value(&node).unwrap();
+            result["created"] = serde_json::Value::Bool(created);
+            Ok(Json(result))
         }
         "alias" => {
             let text = req.text.ok_or_else(|| {
@@ -2325,6 +2320,32 @@ pub(crate) async fn retrieve(
                 &state.embedding_model,
                 &state.distance_metric,
             ))
+        }
+        "hybrid" => {
+            let query = req.query.clone().ok_or_else(|| {
+                err_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "query required for hybrid mode",
+                    "missing_field",
+                )
+            })?;
+            let k = req.k.unwrap_or(10);
+            let mut opts = SearchOptions::new();
+            if let Some(ref nts) = req.node_types {
+                if let Some(first) = nts.first() {
+                    opts.node_type = Some(parse_node_type(first));
+                }
+            }
+            if let Some(ref l) = req.layer {
+                opts.layer = parse_layer(l);
+            }
+            // hybrid_search falls back to FTS-only if no embeddings configured
+            let results = state
+                .graph
+                .hybrid_search(query, None, k, opts)
+                .await
+                .map_err(map_err_500)?;
+            Ok(Json(serde_json::to_value(results).unwrap()))
         }
         "active_goals" => {
             let goals = state.graph.active_goals().await.map_err(map_err_500)?;

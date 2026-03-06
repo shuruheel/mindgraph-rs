@@ -531,6 +531,22 @@ impl AsyncMindGraph {
             .map_err(join_err)?
     }
 
+    /// Async version of [`MindGraph::hybrid_search`].
+    pub async fn hybrid_search(
+        &self,
+        query: String,
+        query_vec: Option<Vec<f32>>,
+        limit: usize,
+        opts: SearchOptions,
+    ) -> Result<Vec<SearchResult>> {
+        let g = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            g.hybrid_search(&query, query_vec.as_deref(), limit, &opts)
+        })
+        .await
+        .map_err(join_err)?
+    }
+
     // ---- Structured Filtering ----
 
     /// Async version of [`MindGraph::find_nodes`].
@@ -658,6 +674,18 @@ impl AsyncMindGraph {
     pub async fn add_entity(&self, label: String, entity_type: String) -> Result<GraphNode> {
         let g = self.inner.clone();
         tokio::task::spawn_blocking(move || g.add_entity(&label, &entity_type))
+            .await
+            .map_err(join_err)?
+    }
+
+    /// Async version of [`MindGraph::find_or_create_entity`].
+    pub async fn find_or_create_entity(
+        &self,
+        label: String,
+        entity_type: String,
+    ) -> Result<(GraphNode, bool)> {
+        let g = self.inner.clone();
+        tokio::task::spawn_blocking(move || g.find_or_create_entity(&label, &entity_type))
             .await
             .map_err(join_err)?
     }
@@ -1152,6 +1180,18 @@ impl AsyncAgentHandle {
         })
         .await
         .map_err(join_err)?
+    }
+
+    /// Async version of [`AgentHandle::find_or_create_entity`](crate::agent::AgentHandle::find_or_create_entity).
+    pub async fn find_or_create_entity(
+        &self,
+        label: String,
+        entity_type: String,
+    ) -> Result<(GraphNode, bool)> {
+        let g = self.handle.graph_arc().clone();
+        tokio::task::spawn_blocking(move || g.find_or_create_entity(&label, &entity_type))
+            .await
+            .map_err(join_err)?
     }
 
     /// Async version of [`AgentHandle::add_claim`](crate::agent::AgentHandle::add_claim).

@@ -94,4 +94,11 @@ pub(crate) const SCHEMA_MIGRATIONS: &[&str] = &[
     // Full-text search indices on node label and summary
     "::fts create node:label_fts { extractor: label, tokenizer: Simple, filters: [Lowercase] }",
     "::fts create node:summary_fts { extractor: summary, tokenizer: Simple, filters: [Lowercase] }",
+    // Full-content search relation — denormalized text extracted from props
+    r#":create node_search {
+        uid: String
+        =>
+        search_text: String default ''
+    }"#,
+    "::fts create node_search:search_text_fts { extractor: search_text, tokenizer: Simple, filters: [Lowercase] }",
 ];

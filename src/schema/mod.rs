@@ -81,12 +81,13 @@ pub enum NodeType {
     Control,
     RiskAssessment,
 
-    // Memory (5)
+    // Memory (6)
     Session,
     Trace,
     Summary,
     Preference,
     MemoryPolicy,
+    Journal,
 
     // Agent (8)
     Agent,
@@ -156,7 +157,8 @@ impl NodeType {
             | NodeType::Trace
             | NodeType::Summary
             | NodeType::Preference
-            | NodeType::MemoryPolicy => Layer::Memory,
+            | NodeType::MemoryPolicy
+            | NodeType::Journal => Layer::Memory,
 
             // Agent
             NodeType::Agent
@@ -219,6 +221,7 @@ impl NodeType {
             NodeType::Summary => "Summary",
             NodeType::Preference => "Preference",
             NodeType::MemoryPolicy => "MemoryPolicy",
+            NodeType::Journal => "Journal",
             NodeType::Agent => "Agent",
             NodeType::Task => "Task",
             NodeType::Plan => "Plan",
@@ -334,6 +337,9 @@ pub enum EdgeType {
     GovernedByPolicy,
     BudgetFor,
 
+    // Temporal
+    Follows,
+
     // Social
     WorksFor,
     AffiliatedWith,
@@ -417,6 +423,7 @@ impl EdgeType {
             EdgeType::ProducesNode => "PRODUCES_NODE",
             EdgeType::GovernedByPolicy => "GOVERNED_BY_POLICY",
             EdgeType::BudgetFor => "BUDGET_FOR",
+            EdgeType::Follows => "FOLLOWS",
             EdgeType::WorksFor => "WORKS_FOR",
             EdgeType::AffiliatedWith => "AFFILIATED_WITH",
             EdgeType::About => "ABOUT",

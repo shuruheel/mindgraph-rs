@@ -1614,7 +1614,9 @@ async fn get_edge_between(
 
 /// Build the graph API routes without auth middleware.
 /// Used by the cloud service (which provides its own auth layer).
-pub fn graph_routes(state: Arc<AppState>) -> Router {
+/// Graph API router without state. Callers must provide state via `.with_state()`.
+/// Used by `mindgraph-cloud` to inject per-tenant state at request time.
+pub fn graph_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health))
         .route("/stats", get(get_stats))
@@ -1702,7 +1704,11 @@ pub fn graph_routes(state: Arc<AppState>) -> Router {
         .route("/retrieve", post(handlers::retrieve))
         .route("/traverse", post(handlers::traverse))
         .route("/evolve", post(handlers::evolve))
-        .with_state(state)
+}
+
+/// Build graph API routes with state baked in (used by standalone server).
+pub fn graph_routes(state: Arc<AppState>) -> Router {
+    graph_router().with_state(state)
 }
 
 /// Build the full application router with Bearer token auth middleware.

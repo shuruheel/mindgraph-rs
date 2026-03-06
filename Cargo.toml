@@ -3,7 +3,7 @@ members = ["mindgraph-server"]
 
 [package]
 name = "mindgraph"
-version = "0.7.2"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.85"
 description = "A structured semantic memory graph for agentic systems"

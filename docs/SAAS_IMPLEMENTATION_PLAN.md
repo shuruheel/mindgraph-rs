@@ -537,11 +537,11 @@ See `docs/DESIGN_LESSONS_ANALYSIS.md` for the full analysis.
 |---|---|---|
 | 1 | Phase 0 | Extract handlers into lib.rs, GraphProvider trait (DONE) |
 | 2 | Phase 0.5 | Library hardening: write validation, full-content FTS, entity dedup, hybrid search, Follows edge, Journal type (DONE) |
-| 3 | Phase 1 | Supabase schema, auth, org support, API keys, management endpoints |
-| 4 | Phase 2 | TenantGraphPool, data isolation, embedding proxy |
-| 5 | Phase 3 | Stripe billing, plan enforcement |
-| 6 | Phase 4 | Rate limiting, quota headers |
-| 7 | Phase 5 | Fly.io deployment, backups, monitoring |
+| 3 | Phase 1 | Supabase schema, auth, org support, API keys, management endpoints (DONE) |
+| 4 | Phase 2 | TenantGraphPool, data isolation, graph proxy (DONE) |
+| 5 | Phase 3 | Stripe billing, plan tiers, usage tracking (DONE — MVP) |
+| 6 | Phase 4 | Rate limiting, quota headers (DONE — in-memory) |
+| 7 | Phase 5 | Fly.io deployment config, Dockerfile (DONE — config ready) |
 | 8 | Phase 6 | Dashboard MVP |
 | 9 | Phase 7 | SDKs, OpenAPI, docs |
 

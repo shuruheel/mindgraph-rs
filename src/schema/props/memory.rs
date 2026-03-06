@@ -76,3 +76,12 @@ impl Default for MemoryPolicyProps {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct JournalProps {
+    pub content: String,
+    pub session_uid: Option<String>,
+    pub journal_type: Option<String>,
+    pub tags: Vec<String>,
+}

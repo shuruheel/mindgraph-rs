@@ -77,6 +77,8 @@ impl CozoStorage {
     /// Insert a node.
     pub fn insert_node(&self, node: &GraphNode) -> Result<()> {
         let props_json = node.props.try_to_json_untagged()?;
+        let search_text = self.build_search_text(node);
+
         let script = r#"
             ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
               confidence, salience, privacy_level, embedding_ref,
@@ -95,6 +97,9 @@ impl CozoStorage {
 
         let params = self.node_to_params(node, props_json);
         self.run_script(script, params)?;
+
+        // Update full-content search index
+        self.upsert_search_text(&node.uid, &search_text)?;
         Ok(())
     }
 
@@ -1265,6 +1270,25 @@ impl CozoStorage {
                 rows.join(", ")
             );
             self.run_script(&script, params)?;
+
+            // Batch update search text
+            let mut search_rows = Vec::new();
+            let mut search_params = BTreeMap::new();
+            for (i, node) in chunk.iter().enumerate() {
+                let prefix = format!("s{}", i);
+                let search_text = self.build_search_text(node);
+                search_params.insert(format!("{}_uid", prefix), str_val(node.uid.as_str()));
+                search_params.insert(format!("{}_search_text", prefix), str_val(&search_text));
+                search_rows.push(format!("[${p}_uid, ${p}_search_text]", p = prefix));
+            }
+            let search_script = format!(
+                r#"
+                ?[uid, search_text] <- [{}]
+                :put node_search {{ uid => search_text }}
+                "#,
+                search_rows.join(", ")
+            );
+            self.run_script(&search_script, search_params)?;
         }
         Ok(())
     }
@@ -1432,7 +1456,7 @@ impl CozoStorage {
 
     // ---- Full-Text Search ----
 
-    /// Full-text search across node labels and summaries.
+    /// Full-text search across node labels, summaries, and props content.
     pub fn query_fts_search(
         &self,
         query: &str,
@@ -1482,8 +1506,13 @@ impl CozoStorage {
 
                 {summary_rule}
 
+                content_matches[uid, score] :=
+                    ~node_search:search_text_fts{{ uid, search_text | query: $q, k: $k, bind_score: score }},
+                    score >= $min_score
+
                 combined[uid, max(score)] := label_matches[uid, score]
                 combined[uid, max(score)] := summary_matches[uid, score]
+                combined[uid, max(score)] := content_matches[uid, score]
 
                 ?[uid, node_type, layer, label, summary, created_at, updated_at, version,
                   confidence, salience, privacy_level, embedding_ref,
@@ -1793,6 +1822,13 @@ impl CozoStorage {
             "#;
             let _ = self.run_script(alias_script, params.clone());
 
+            // Delete search text
+            let search_del_script = r#"
+                ?[uid] := uid = $uid
+                :rm node_search { uid }
+            "#;
+            let _ = self.run_script(search_del_script, params.clone());
+
             // Delete the node itself
             let node_del_script = r#"
                 ?[uid] := uid = $uid
@@ -1842,6 +1878,7 @@ impl CozoStorage {
             "edge_version",
             "provenance",
             "alias",
+            "node_search",
         ];
         let mut result = BTreeMap::new();
 
@@ -2584,6 +2621,41 @@ impl CozoStorage {
         p
     }
 
+    /// Build the search_text string for a node: label + summary + props content.
+    fn build_search_text(&self, node: &GraphNode) -> String {
+        let mut text = String::new();
+        if !node.label.is_empty() {
+            text.push_str(&node.label);
+        }
+        if !node.summary.is_empty() {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&node.summary);
+        }
+        let props_text = node.props.search_text();
+        if !props_text.is_empty() {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&props_text);
+        }
+        text
+    }
+
+    /// Insert or update the search text for a node in the node_search relation.
+    pub fn upsert_search_text(&self, uid: &Uid, search_text: &str) -> Result<()> {
+        let script = r#"
+            ?[uid, search_text] <- [[$uid, $search_text]]
+            :put node_search { uid => search_text }
+        "#;
+        let mut params = BTreeMap::new();
+        params.insert("uid".into(), str_val(uid.as_str()));
+        params.insert("search_text".into(), str_val(search_text));
+        self.run_script(script, params)?;
+        Ok(())
+    }
+
     fn row_to_node(&self, row: &[DataValue]) -> Result<GraphNode> {
         if row.len() < 16 {
             return Err(Error::Storage(format!(
@@ -2921,6 +2993,7 @@ fn parse_node_type(s: &str) -> Result<NodeType> {
         "Summary" => Ok(NodeType::Summary),
         "Preference" => Ok(NodeType::Preference),
         "MemoryPolicy" => Ok(NodeType::MemoryPolicy),
+        "Journal" => Ok(NodeType::Journal),
         "Agent" => Ok(NodeType::Agent),
         "Task" => Ok(NodeType::Task),
         "Plan" => Ok(NodeType::Plan),
@@ -3005,6 +3078,7 @@ fn parse_edge_type(s: &str) -> Result<EdgeType> {
         "PRODUCES_NODE" => Ok(EdgeType::ProducesNode),
         "GOVERNED_BY_POLICY" => Ok(EdgeType::GovernedByPolicy),
         "BUDGET_FOR" => Ok(EdgeType::BudgetFor),
+        "FOLLOWS" => Ok(EdgeType::Follows),
         "WORKS_FOR" => Ok(EdgeType::WorksFor),
         "AFFILIATED_WITH" => Ok(EdgeType::AffiliatedWith),
         "ABOUT" => Ok(EdgeType::About),

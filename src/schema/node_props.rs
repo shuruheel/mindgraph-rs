@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::schema::props::*;
@@ -60,6 +62,7 @@ pub enum NodeProps {
     Summary(SummaryProps),
     Preference(PreferenceProps),
     MemoryPolicy(MemoryPolicyProps),
+    Journal(JournalProps),
 
     // Agent
     Agent(AgentProps),
@@ -127,6 +130,7 @@ impl NodeProps {
             NodeProps::Summary(_) => NodeType::Summary,
             NodeProps::Preference(_) => NodeType::Preference,
             NodeProps::MemoryPolicy(_) => NodeType::MemoryPolicy,
+            NodeProps::Journal(_) => NodeType::Journal,
             NodeProps::Agent(_) => NodeType::Agent,
             NodeProps::Task(_) => NodeType::Task,
             NodeProps::Plan(_) => NodeType::Plan,
@@ -211,6 +215,7 @@ impl NodeProps {
             NodeType::Summary => Ok(NodeProps::Summary(de(value)?)),
             NodeType::Preference => Ok(NodeProps::Preference(de(value)?)),
             NodeType::MemoryPolicy => Ok(NodeProps::MemoryPolicy(de(value)?)),
+            NodeType::Journal => Ok(NodeProps::Journal(de(value)?)),
             NodeType::Agent => Ok(NodeProps::Agent(de(value)?)),
             NodeType::Task => Ok(NodeProps::Task(de(value)?)),
             NodeType::Plan => Ok(NodeProps::Plan(de(value)?)),
@@ -238,6 +243,228 @@ impl NodeProps {
         match self {
             NodeProps::Custom { layer, .. } => *layer,
             other => other.node_type().layer(),
+        }
+    }
+
+    /// Extract searchable text content from these props.
+    ///
+    /// Returns a concatenation of all user-authored text fields (content,
+    /// description, name, etc.) suitable for full-text search indexing.
+    /// Metadata fields (status, type, timestamps) are excluded.
+    pub fn search_text(&self) -> String {
+        let json = self.to_json();
+        let obj = match json.as_object() {
+            Some(o) => o,
+            None => return String::new(),
+        };
+
+        // Collect text from known searchable field names
+        let text_fields = [
+            "content",
+            "description",
+            "canonical_name",
+            "title",
+            "uri",
+            "name",
+            "principle",
+            "statement",
+            "definition",
+            "text",
+            "question",
+            "expression",
+            "justification",
+            "vulnerability",
+            "weakest_link",
+            "original_expectation",
+            "decision_rationale",
+            "action_name",
+            "fallback_description",
+            "focus_summary",
+            "key",
+            "value",
+            "condition",
+            "action",
+            "result_summary",
+            "expected_outcome",
+            "actual_outcome",
+            "reason",
+            "conditions",
+            "applies_to",
+            "error",
+            "input",
+            "output",
+            "mitigation",
+            "sample_description",
+        ];
+
+        let vec_fields = [
+            "aliases",
+            "predicted_observations",
+            "core_commitments",
+            "predictive_successes",
+            "core_assumptions",
+            "exemplar_problems",
+            "accepted_methods",
+            "limitations",
+            "validity_conditions",
+            "parameters",
+            "variables_manipulated",
+            "variables_measured",
+            "controls",
+            "alternative_definitions",
+            "blocking_factors",
+            "mapping_elements",
+            "domains_observed",
+            "components",
+            "interactions",
+            "key_parameters",
+            "simplifications",
+            "metrics",
+            "failure_domains",
+            "comparison_to",
+            "critical_assumptions",
+            "sensitivity_map",
+            "critical_inputs",
+            "break_points",
+            "applicable_contexts",
+            "applications",
+            "variables",
+            "assumptions",
+            "success_criteria",
+            "pros",
+            "cons",
+            "criteria",
+            "preconditions",
+            "postconditions",
+            "capabilities",
+            "domain_restrictions",
+            "rules",
+            "side_effects",
+        ];
+
+        let mut parts = Vec::new();
+
+        for field in &text_fields {
+            if let Some(serde_json::Value::String(s)) = obj.get(*field) {
+                if !s.is_empty() {
+                    parts.push(s.as_str());
+                }
+            }
+        }
+
+        for field in &vec_fields {
+            if let Some(serde_json::Value::Array(arr)) = obj.get(*field) {
+                for item in arr {
+                    if let serde_json::Value::String(s) = item {
+                        if !s.is_empty() {
+                            parts.push(s.as_str());
+                        }
+                    }
+                }
+            }
+        }
+
+        parts.join(" ")
+    }
+
+    /// Returns the set of known field names for the given node type.
+    ///
+    /// Serializes a default instance of the props struct to JSON and extracts the keys.
+    /// For `Custom` types, returns an empty set (all fields are allowed).
+    pub fn known_fields_for_type(node_type: &NodeType) -> HashSet<String> {
+        fn fields_of<T: Default + Serialize>() -> HashSet<String> {
+            serde_json::to_value(T::default())
+                .ok()
+                .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect()))
+                .unwrap_or_default()
+        }
+        match node_type {
+            NodeType::Source => fields_of::<SourceProps>(),
+            NodeType::Snippet => fields_of::<SnippetProps>(),
+            NodeType::Entity => fields_of::<EntityProps>(),
+            NodeType::Observation => fields_of::<ObservationProps>(),
+            NodeType::Claim => fields_of::<ClaimProps>(),
+            NodeType::Evidence => fields_of::<EvidenceProps>(),
+            NodeType::Warrant => fields_of::<WarrantProps>(),
+            NodeType::Argument => fields_of::<ArgumentProps>(),
+            NodeType::Hypothesis => fields_of::<HypothesisProps>(),
+            NodeType::Theory => fields_of::<TheoryProps>(),
+            NodeType::Paradigm => fields_of::<ParadigmProps>(),
+            NodeType::Anomaly => fields_of::<AnomalyProps>(),
+            NodeType::Method => fields_of::<MethodProps>(),
+            NodeType::Experiment => fields_of::<ExperimentProps>(),
+            NodeType::Concept => fields_of::<ConceptProps>(),
+            NodeType::Assumption => fields_of::<AssumptionProps>(),
+            NodeType::Question => fields_of::<QuestionProps>(),
+            NodeType::OpenQuestion => fields_of::<OpenQuestionProps>(),
+            NodeType::Analogy => fields_of::<AnalogyProps>(),
+            NodeType::Pattern => fields_of::<PatternProps>(),
+            NodeType::Mechanism => fields_of::<MechanismProps>(),
+            NodeType::Model => fields_of::<ModelProps>(),
+            NodeType::ModelEvaluation => fields_of::<ModelEvaluationProps>(),
+            NodeType::InferenceChain => fields_of::<InferenceChainProps>(),
+            NodeType::SensitivityAnalysis => fields_of::<SensitivityAnalysisProps>(),
+            NodeType::ReasoningStrategy => fields_of::<ReasoningStrategyProps>(),
+            NodeType::Theorem => fields_of::<TheoremProps>(),
+            NodeType::Equation => fields_of::<EquationProps>(),
+            NodeType::Goal => fields_of::<GoalProps>(),
+            NodeType::Project => fields_of::<ProjectProps>(),
+            NodeType::Decision => fields_of::<DecisionProps>(),
+            NodeType::Option => fields_of::<OptionProps>(),
+            NodeType::Constraint => fields_of::<ConstraintProps>(),
+            NodeType::Milestone => fields_of::<MilestoneProps>(),
+            NodeType::Affordance => fields_of::<AffordanceProps>(),
+            NodeType::Flow => fields_of::<FlowProps>(),
+            NodeType::FlowStep => fields_of::<FlowStepProps>(),
+            NodeType::Control => fields_of::<ControlProps>(),
+            NodeType::RiskAssessment => fields_of::<RiskAssessmentProps>(),
+            NodeType::Session => fields_of::<SessionProps>(),
+            NodeType::Trace => fields_of::<TraceProps>(),
+            NodeType::Summary => fields_of::<SummaryProps>(),
+            NodeType::Preference => fields_of::<PreferenceProps>(),
+            NodeType::MemoryPolicy => fields_of::<MemoryPolicyProps>(),
+            NodeType::Journal => fields_of::<JournalProps>(),
+            NodeType::Agent => fields_of::<AgentProps>(),
+            NodeType::Task => fields_of::<TaskProps>(),
+            NodeType::Plan => fields_of::<PlanProps>(),
+            NodeType::PlanStep => fields_of::<PlanStepProps>(),
+            NodeType::Approval => fields_of::<ApprovalProps>(),
+            NodeType::Policy => fields_of::<PolicyProps>(),
+            NodeType::Execution => fields_of::<ExecutionProps>(),
+            NodeType::SafetyBudget => fields_of::<SafetyBudgetProps>(),
+            NodeType::Custom(_) => HashSet::new(),
+        }
+    }
+
+    /// Validate a JSON patch object against the known fields for this node type.
+    ///
+    /// Returns `Ok(())` if all patch keys are valid fields. Returns `Err` with the
+    /// list of unknown field names if any keys don't match.
+    pub fn validate_patch(
+        node_type: &NodeType,
+        patch: &serde_json::Value,
+    ) -> std::result::Result<(), Vec<String>> {
+        // Custom types allow any fields
+        if matches!(node_type, NodeType::Custom(_)) {
+            return Ok(());
+        }
+        let known = Self::known_fields_for_type(node_type);
+        if known.is_empty() {
+            return Ok(());
+        }
+        if let Some(obj) = patch.as_object() {
+            let unknown: Vec<String> = obj
+                .keys()
+                .filter(|k| !known.contains(*k))
+                .cloned()
+                .collect();
+            if unknown.is_empty() {
+                Ok(())
+            } else {
+                Err(unknown)
+            }
+        } else {
+            Ok(())
         }
     }
 }

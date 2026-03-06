@@ -2572,6 +2572,24 @@ pub(crate) async fn evolve(
                     .map_err(map_err_500)?
                     .ok_or_else(|| not_found(format!("node {} not found", req.uid)))?;
                 let node_type = current.node_type.clone();
+
+                // Validate patch keys against known fields for this node type
+                if let Err(unknown) = mindgraph::NodeProps::validate_patch(&node_type, patch) {
+                    return Err(err_with_code(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        format!(
+                            "unknown fields for {}: {}. Valid fields: {}",
+                            node_type,
+                            unknown.join(", "),
+                            mindgraph::NodeProps::known_fields_for_type(&node_type)
+                                .into_iter()
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        "unknown_props_fields",
+                    ));
+                }
+
                 let mut base = current.props.to_json();
                 // Merge patch into base
                 if let (Some(base_map), Some(patch_obj)) = (base.as_object_mut(), patch.as_object())

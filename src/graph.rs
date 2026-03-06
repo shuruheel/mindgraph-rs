@@ -1092,6 +1092,77 @@ impl MindGraph {
         self.storage.query_fts_search(query, opts)
     }
 
+    /// Hybrid search combining FTS (BM25) and vector similarity using
+    /// Reciprocal Rank Fusion (RRF).
+    ///
+    /// Runs both FTS and semantic search, then fuses results with:
+    /// `score = sum(1 / (k + rank_i))` where k=60 (standard RRF constant).
+    ///
+    /// Returns up to `limit` results sorted by fused score. Falls back to
+    /// FTS-only if embeddings are not configured.
+    pub fn hybrid_search(
+        &self,
+        query: &str,
+        query_vec: Option<&[f32]>,
+        limit: usize,
+        opts: &SearchOptions,
+    ) -> Result<Vec<SearchResult>> {
+        const RRF_K: f64 = 60.0;
+
+        // FTS results
+        let fts_opts = SearchOptions {
+            limit: Some((limit * 3) as u32),
+            ..opts.clone()
+        };
+        let fts_results = self.search(query, &fts_opts)?;
+
+        // Vector results (if available)
+        let vec_results = if let Some(qv) = query_vec {
+            if self.embedding_dimension().is_some() {
+                self.semantic_search(qv, limit * 3).ok().unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        // If no vector results, just return FTS
+        if vec_results.is_empty() {
+            let mut results = fts_results;
+            results.truncate(limit);
+            return Ok(results);
+        }
+
+        // Build RRF scores
+        let mut scores: HashMap<Uid, (f64, Option<GraphNode>)> = HashMap::new();
+
+        for (rank, sr) in fts_results.iter().enumerate() {
+            let rrf = 1.0 / (RRF_K + rank as f64 + 1.0);
+            let entry = scores
+                .entry(sr.node.uid.clone())
+                .or_insert((0.0, Some(sr.node.clone())));
+            entry.0 += rrf;
+        }
+
+        for (rank, (node, _dist)) in vec_results.iter().enumerate() {
+            let rrf = 1.0 / (RRF_K + rank as f64 + 1.0);
+            let entry = scores
+                .entry(node.uid.clone())
+                .or_insert((0.0, Some(node.clone())));
+            entry.0 += rrf;
+        }
+
+        let mut fused: Vec<SearchResult> = scores
+            .into_values()
+            .filter_map(|(score, node)| node.map(|n| SearchResult { node: n, score }))
+            .collect();
+        fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        fused.truncate(limit);
+
+        Ok(fused)
+    }
+
     // ---- Structured Filtering ----
 
     /// Find nodes matching structured filter criteria.
@@ -1339,6 +1410,49 @@ impl MindGraph {
                 ..Default::default()
             }),
         ))
+    }
+
+    /// Find an existing entity by alias match, or create a new one.
+    ///
+    /// 1. Checks exact alias match for the label (case-sensitive).
+    /// 2. If found and the entity is live, returns it.
+    /// 3. Otherwise, creates a new Entity node and registers the label as an alias.
+    ///
+    /// Returns `(node, created)` — `created` is `true` if a new entity was made.
+    pub fn find_or_create_entity(
+        &self,
+        label: &str,
+        entity_type: &str,
+    ) -> Result<(GraphNode, bool)> {
+        // Try exact alias resolution first
+        if let Some(uid) = self.resolve_alias(label)? {
+            if let Some(node) = self.storage.get_node(&uid)? {
+                if node.tombstone_at.is_none() && node.node_type == NodeType::Entity {
+                    return Ok((node, false));
+                }
+            }
+        }
+
+        // Also try case-insensitive label search for Entity nodes
+        let lower = label.to_lowercase();
+        let filter = NodeFilter {
+            node_type: Some(NodeType::Entity),
+            ..Default::default()
+        };
+        let existing = self.find_nodes(&filter)?;
+        for node in &existing {
+            if node.label.to_lowercase() == lower && node.tombstone_at.is_none() {
+                // Register the alias so future lookups are fast
+                self.add_alias(label, &node.uid, 1.0)?;
+                return Ok((node.clone(), false));
+            }
+        }
+
+        // No match — create new entity
+        let node = self.add_entity(label, entity_type)?;
+        // Register the label as an alias for this entity
+        self.add_alias(label, &node.uid, 1.0)?;
+        Ok((node, true))
     }
 
     /// Add a goal node.

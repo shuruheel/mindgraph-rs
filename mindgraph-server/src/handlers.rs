@@ -5,7 +5,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use mindgraph::{
     now, AffordanceProps, AgentProps, AnalogyProps, AnomalyProps, ApprovalProps, ArgumentProps,
     AssumptionProps, ClaimProps, ConceptProps, Confidence, ConstraintProps, ControlProps,
-    CreateNode, DecisionProps, Direction, EdgeType, EvidenceProps, ExecutionProps,
+    CreateNode, DecisionProps, Direction, EdgeType, EntityProps, EvidenceProps, ExecutionProps,
     ExperimentProps, FlowProps, FlowStepProps, GoalProps, HypothesisProps, InferenceChainProps,
     JournalProps, MechanismProps, MemoryPolicyProps, MethodProps, MilestoneProps,
     ModelEvaluationProps, ModelProps, NodeFilter, NodeProps, NodeType, ObservationProps,
@@ -243,6 +243,8 @@ pub(crate) struct ManageEntityRequest {
     pub(crate) target_uid: Option<String>,
     #[serde(default)]
     pub(crate) edge_type: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 pub(crate) async fn manage_entity(
@@ -262,9 +264,36 @@ pub(crate) async fn manage_entity(
             let entity_type = req.entity_type.unwrap_or_else(|| "other".into());
             let handle = state.graph.agent(&agent_id);
             let (node, created) = handle
-                .find_or_create_entity(label, entity_type)
+                .find_or_create_entity(label.clone(), entity_type.clone())
                 .await
                 .map_err(map_err_500)?;
+            // Apply user props to newly created entities
+            let node = if created && req.props.is_some() {
+                let merged = merge_props(
+                    NodeProps::Entity(EntityProps {
+                        entity_type,
+                        canonical_name: label,
+                        ..Default::default()
+                    }),
+                    req.props.clone(),
+                )?;
+                state
+                    .graph
+                    .update_node(
+                        node.uid.clone(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(merged),
+                        agent_id.clone(),
+                        "apply props on create".into(),
+                    )
+                    .await
+                    .map_err(map_err_500)?
+            } else {
+                node
+            };
             let mut result = serde_json::to_value(&node).unwrap();
             result["created"] = serde_json::Value::Bool(created);
             Ok(Json(result))
@@ -424,18 +453,24 @@ pub(crate) struct EvidenceItem {
     pub(crate) description: String,
     #[serde(default)]
     pub(crate) evidence_type: Option<String>,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct WarrantItem {
     pub(crate) label: String,
     pub(crate) principle: String,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct ArgumentItem {
     pub(crate) label: String,
     pub(crate) summary: String,
+    #[serde(default)]
+    pub(crate) props: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -485,15 +520,16 @@ pub(crate) async fn argument(
     // 2. Create Evidence nodes + Supports edges
     let mut evidence_uids = Vec::new();
     for ev in req.evidence.iter().flatten() {
+        let ev_props = merge_props(
+            NodeProps::Evidence(EvidenceProps {
+                description: ev.description.clone(),
+                evidence_type: ev.evidence_type.clone(),
+                ..Default::default()
+            }),
+            ev.props.clone(),
+        )?;
         let ev_node = handle
-            .add_node(CreateNode::new(
-                &ev.label,
-                NodeProps::Evidence(EvidenceProps {
-                    description: ev.description.clone(),
-                    evidence_type: ev.evidence_type.clone(),
-                    ..Default::default()
-                }),
-            ))
+            .add_node(CreateNode::new(&ev.label, ev_props))
             .await
             .map_err(map_err_500)?;
         let ev_uid = ev_node.uid.to_string();
@@ -504,14 +540,15 @@ pub(crate) async fn argument(
 
     // 3. Create Warrant node + HasWarrant edge
     let warrant_uid = if let Some(w) = &req.warrant {
+        let w_props = merge_props(
+            NodeProps::Warrant(WarrantProps {
+                principle: w.principle.clone(),
+                ..Default::default()
+            }),
+            w.props.clone(),
+        )?;
         let w_node = handle
-            .add_node(CreateNode::new(
-                &w.label,
-                NodeProps::Warrant(WarrantProps {
-                    principle: w.principle.clone(),
-                    ..Default::default()
-                }),
-            ))
+            .add_node(CreateNode::new(&w.label, w_props))
             .await
             .map_err(map_err_500)?;
         let w_uid = w_node.uid.to_string();
@@ -524,14 +561,15 @@ pub(crate) async fn argument(
 
     // 4. Create Argument node + HasConclusion + HasPremise edges
     let argument_uid = if let Some(arg) = &req.argument {
+        let arg_props = merge_props(
+            NodeProps::Argument(ArgumentProps {
+                summary: arg.summary.clone(),
+                ..Default::default()
+            }),
+            arg.props.clone(),
+        )?;
         let arg_node = handle
-            .add_node(CreateNode::new(
-                &arg.label,
-                NodeProps::Argument(ArgumentProps {
-                    summary: arg.summary.clone(),
-                    ..Default::default()
-                }),
-            ))
+            .add_node(CreateNode::new(&arg.label, arg_props))
             .await
             .map_err(map_err_500)?;
         let arg_uid = arg_node.uid.to_string();

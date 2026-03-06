@@ -6,7 +6,7 @@ use mindgraph::{
     now, AffordanceProps, AgentProps, AnalogyProps, AnomalyProps, ApprovalProps, ArgumentProps,
     AssumptionProps, ClaimProps, ConceptProps, Confidence, ConstraintProps, ControlProps,
     CreateNode, DecisionProps, Direction, EdgeType, EvidenceProps, ExecutionProps, FlowProps,
-    FlowStepProps, GoalProps, HypothesisProps, InferenceChainProps, MechanismProps,
+    FlowStepProps, GoalProps, HypothesisProps, InferenceChainProps, JournalProps, MechanismProps,
     MemoryPolicyProps, MilestoneProps, ModelEvaluationProps, ModelProps, NodeFilter, NodeProps,
     NodeType, ObservationProps, OpenQuestionProps, OptionProps, Pagination, ParadigmProps,
     PatternProps, PlanProps, PlanStepProps, PolicyProps, ProjectProps, QuestionProps,
@@ -1381,6 +1381,12 @@ pub(crate) struct SessionOpRequest {
     #[serde(default)]
     pub(crate) relevant_node_uids: Option<Vec<String>>,
     #[serde(default)]
+    pub(crate) content: Option<String>,
+    #[serde(default)]
+    pub(crate) journal_type: Option<String>,
+    #[serde(default)]
+    pub(crate) tags: Option<Vec<String>>,
+    #[serde(default)]
     pub(crate) agent_id: Option<String>,
 }
 
@@ -1482,6 +1488,43 @@ pub(crate) async fn session_op(
                 "uid": sess_uid,
                 "action": "close",
                 "version": updated.version,
+            })))
+        }
+        "journal" => {
+            let label = req.label.clone().unwrap_or_else(|| "Journal".into());
+            let content = req.content.clone().unwrap_or_default();
+            let journal_node = handle
+                .add_node(CreateNode::new(
+                    &label,
+                    NodeProps::Journal(JournalProps {
+                        content: content.clone(),
+                        session_uid: req.session_uid.clone(),
+                        journal_type: req.journal_type.clone(),
+                        tags: req.tags.clone().unwrap_or_default(),
+                    }),
+                ))
+                .await
+                .map_err(map_err_500)?;
+            let journal_uid = journal_node.uid.to_string();
+            // journal → session (if provided)
+            if let Some(ref sess_uid) = req.session_uid {
+                create_link(
+                    &state,
+                    &journal_uid,
+                    sess_uid,
+                    EdgeType::CapturedIn,
+                    &agent_id,
+                )
+                .await?;
+            }
+            // journal → relevant nodes
+            for rel_uid in req.relevant_node_uids.iter().flatten() {
+                create_link(&state, &journal_uid, rel_uid, EdgeType::RelevantTo, &agent_id).await?;
+            }
+            Ok(Json(serde_json::json!({
+                "uid": journal_uid,
+                "action": "journal",
+                "label": label,
             })))
         }
         other => Err(err_with_code(

@@ -324,73 +324,12 @@ pub struct ErrorResponse {
     pub distance_metric: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct EntityRequest {
-    label: String,
-    entity_type: String,
-    #[serde(default = "default_agent")]
-    agent_id: String,
-}
-
-#[derive(Deserialize)]
-struct ClaimRequest {
-    label: String,
-    content: String,
-    #[serde(default = "default_half")]
-    confidence: f64,
-    #[serde(default = "default_agent")]
-    agent_id: String,
-}
-
 fn default_half() -> f64 {
     0.5
 }
 
 fn default_one() -> f64 {
     1.0
-}
-
-#[derive(Deserialize)]
-struct GoalRequest {
-    label: String,
-    #[serde(default)]
-    priority: Option<String>,
-    #[serde(default = "default_agent")]
-    agent_id: String,
-}
-
-#[derive(Deserialize)]
-struct PreferenceRequest {
-    label: String,
-    key: String,
-    value: String,
-    #[serde(default = "default_agent")]
-    agent_id: String,
-}
-
-#[derive(Deserialize)]
-struct SessionRequest {
-    label: String,
-    #[serde(default)]
-    focus: Option<String>,
-    #[serde(default = "default_agent")]
-    agent_id: String,
-}
-
-#[derive(Deserialize)]
-struct ObservationRequest {
-    label: String,
-    content: String,
-    #[serde(default = "default_agent")]
-    agent_id: String,
-}
-
-#[derive(Deserialize)]
-struct SummaryRequest {
-    label: String,
-    content: String,
-    #[serde(default = "default_agent")]
-    agent_id: String,
 }
 
 #[derive(Deserialize)]
@@ -624,90 +563,6 @@ async fn get_stats(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let stats = state.graph.stats().await.map_err(map_err_500)?;
     Ok(Json(stats))
-}
-
-async fn add_entity(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<EntityRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_entity(req.label, req.entity_type)
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
-}
-
-async fn add_claim(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<ClaimRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_claim(req.label, req.content, req.confidence)
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
-}
-
-async fn add_goal(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<GoalRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_goal(req.label, req.priority.unwrap_or_else(|| "medium".into()))
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
-}
-
-async fn add_preference(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<PreferenceRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_preference(req.label, req.key, req.value)
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
-}
-
-async fn add_session(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<SessionRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_session(req.label, req.focus.unwrap_or_default())
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
-}
-
-async fn add_observation(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<ObservationRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_observation(req.label, req.content)
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
-}
-
-async fn add_summary(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<SummaryRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let handle = state.graph.agent(&req.agent_id);
-    let node = handle
-        .add_summary(req.label, req.content)
-        .await
-        .map_err(map_err_500)?;
-    Ok((StatusCode::CREATED, Json(node)))
 }
 
 async fn add_node(
@@ -1620,14 +1475,6 @@ pub fn graph_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health))
         .route("/stats", get(get_stats))
-        // Convenience constructors
-        .route("/entity", post(add_entity))
-        .route("/claim", post(add_claim))
-        .route("/goal", post(add_goal))
-        .route("/preference", post(add_preference))
-        .route("/session", post(add_session))
-        .route("/observation", post(add_observation))
-        .route("/summary", post(add_summary))
         // Generic node CRUD
         .route("/node", post(add_node))
         .route(

@@ -52,26 +52,61 @@ impl CozoStorage {
         Ok(())
     }
 
-    /// Execute a mutable CozoDB script.
+    /// Maximum retries for transient "database is locked" errors.
+    const MAX_RETRIES: u32 = 5;
+    /// Base delay between retries (doubles each attempt: 10ms, 20ms, 40ms, 80ms, 160ms).
+    const BASE_RETRY_DELAY_MS: u64 = 10;
+
+    /// Execute a mutable CozoDB script with automatic retry on SQLite lock contention.
     pub fn run_script(
         &self,
         script: &str,
         params: BTreeMap<String, DataValue>,
     ) -> Result<NamedRows> {
-        self.db
-            .run_script(script, params, ScriptMutability::Mutable)
-            .map_err(|e| Error::Storage(e.to_string()))
+        for attempt in 0..Self::MAX_RETRIES {
+            match self
+                .db
+                .run_script(script, params.clone(), ScriptMutability::Mutable)
+            {
+                Ok(rows) => return Ok(rows),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("database is locked") && attempt + 1 < Self::MAX_RETRIES {
+                        let delay_ms = Self::BASE_RETRY_DELAY_MS * (1 << attempt);
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        continue;
+                    }
+                    return Err(Error::Storage(err_str));
+                }
+            }
+        }
+        unreachable!()
     }
 
-    /// Execute an immutable (read-only) CozoDB script.
+    /// Execute an immutable (read-only) CozoDB script with automatic retry on SQLite lock contention.
     pub fn run_query(
         &self,
         script: &str,
         params: BTreeMap<String, DataValue>,
     ) -> Result<NamedRows> {
-        self.db
-            .run_script(script, params, ScriptMutability::Immutable)
-            .map_err(|e| Error::Storage(e.to_string()))
+        for attempt in 0..Self::MAX_RETRIES {
+            match self
+                .db
+                .run_script(script, params.clone(), ScriptMutability::Immutable)
+            {
+                Ok(rows) => return Ok(rows),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("database is locked") && attempt + 1 < Self::MAX_RETRIES {
+                        let delay_ms = Self::BASE_RETRY_DELAY_MS * (1 << attempt);
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        continue;
+                    }
+                    return Err(Error::Storage(err_str));
+                }
+            }
+        }
+        unreachable!()
     }
 
     /// Insert a node.

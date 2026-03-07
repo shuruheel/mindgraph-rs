@@ -1675,7 +1675,9 @@ impl MindGraph {
             for (uid, dist) in raw {
                 if let Some(node) = self.storage.get_node(&uid)? {
                     if node.tombstone_at.is_none() {
-                        results.push((node, dist));
+                        // Convert cosine distance to similarity (higher = more similar)
+                        let similarity = 1.0 - dist;
+                        results.push((node, similarity));
                         if results.len() >= k {
                             break;
                         }
@@ -1691,6 +1693,8 @@ impl MindGraph {
             fetch_size = (fetch_size * 2).min(max_fetch);
         }
 
+        // Sort by similarity descending (highest first)
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(k);
         Ok(results)
     }
@@ -1698,16 +1702,12 @@ impl MindGraph {
     /// Embed a node's label+summary text using the given provider.
     pub fn embed_node(&self, uid: &Uid, provider: &dyn EmbeddingProvider) -> Result<()> {
         let node = self.get_live_node(uid)?;
-        let text = if node.summary.is_empty() {
-            node.label.clone()
-        } else {
-            format!("{} {}", node.label, node.summary)
-        };
+        let text = Self::embedding_text(&node);
         let embedding = provider.embed(&text)?;
         self.set_embedding(uid, &embedding)
     }
 
-    /// Embed multiple nodes' label+summary text using the given provider.
+    /// Embed multiple nodes' text using the given provider.
     /// Skips tombstoned nodes. Returns the count of nodes successfully embedded.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, uids, provider)))]
     pub fn embed_nodes(&self, uids: &[Uid], provider: &dyn EmbeddingProvider) -> Result<usize> {
@@ -1717,12 +1717,7 @@ impl MindGraph {
         for uid in uids {
             if let Some(node) = self.storage.get_node(uid)? {
                 if node.tombstone_at.is_none() {
-                    let text = if node.summary.is_empty() {
-                        node.label.clone()
-                    } else {
-                        format!("{} {}", node.label, node.summary)
-                    };
-                    texts.push(text);
+                    texts.push(Self::embedding_text(&node));
                     live_uids.push(uid.clone());
                 }
             }
@@ -1751,6 +1746,24 @@ impl MindGraph {
     ) -> Result<Vec<(GraphNode, f64)>> {
         let query_vec = provider.embed(query)?;
         self.semantic_search(&query_vec, k)
+    }
+
+    /// Build the text used for embedding a node: label + summary + searchable props content.
+    /// This matches the FTS search_text construction so embeddings and full-text search
+    /// are semantically aligned.
+    fn embedding_text(node: &GraphNode) -> String {
+        let mut parts = Vec::new();
+        if !node.label.is_empty() {
+            parts.push(node.label.as_str().to_owned());
+        }
+        if !node.summary.is_empty() {
+            parts.push(node.summary.clone());
+        }
+        let props_text = node.props.search_text();
+        if !props_text.is_empty() {
+            parts.push(props_text);
+        }
+        parts.join(" ")
     }
 
     // ---- v0.4: Salience Decay ----

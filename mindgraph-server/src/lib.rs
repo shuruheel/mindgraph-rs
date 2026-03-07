@@ -1184,20 +1184,32 @@ async fn embedding_search(
 }
 
 async fn embedding_search_text(
-    State(_state): State<Arc<AppState>>,
-    Json(_req): Json<EmbeddingSearchTextRequest>,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EmbeddingSearchTextRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    Err::<(), _>((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ErrorResponse {
-            error: "text-based embedding search requires a configured embedding provider; \
-                    use POST /embeddings/search with a pre-computed vector instead"
-                .into(),
-            code: None,
-            embedding_model: None,
-            distance_metric: None,
-        }),
-    ))
+    let provider = state.graph.get_embedding_provider().await.ok_or_else(|| {
+        err_embedding_not_configured(
+            "text-based embedding search requires a configured embedding provider; \
+             use POST /embeddings/search with a pre-computed vector instead",
+            &state.embedding_model,
+            &state.distance_metric,
+        )
+    })?;
+    let results = state
+        .graph
+        .semantic_search_text_async(&req.text, req.k as usize, provider.as_ref())
+        .await
+        .map_err(map_err_500)?;
+    let items: Vec<serde_json::Value> = results
+        .into_iter()
+        .map(|(node, score)| {
+            serde_json::json!({
+                "node": node,
+                "score": score,
+            })
+        })
+        .collect();
+    Ok(Json(items))
 }
 
 // ---- P3: Batch Operations ----

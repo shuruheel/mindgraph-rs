@@ -63,8 +63,7 @@ pub enum Error {
     #[error("Task join error: {0}")]
     TaskJoin(String),
 
-    /// HTTP error (for optional providers).
-    #[cfg(feature = "openai")]
+    /// HTTP error (embedding providers, external APIs).
     #[error("HTTP error: {0}")]
     Http(String),
 }

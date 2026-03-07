@@ -34,6 +34,7 @@ fn join_err(e: tokio::task::JoinError) -> Error {
 #[derive(Clone)]
 pub struct AsyncMindGraph {
     inner: Arc<MindGraph>,
+    embedding_provider: Arc<tokio::sync::RwLock<Option<Arc<dyn crate::embeddings::AsyncEmbeddingProvider>>>>,
 }
 
 impl AsyncMindGraph {
@@ -45,6 +46,7 @@ impl AsyncMindGraph {
             .map_err(join_err)??;
         Ok(Self {
             inner: Arc::new(graph),
+            embedding_provider: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -55,6 +57,7 @@ impl AsyncMindGraph {
             .map_err(join_err)??;
         Ok(Self {
             inner: Arc::new(graph),
+            embedding_provider: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -62,7 +65,34 @@ impl AsyncMindGraph {
     pub fn from_sync(graph: MindGraph) -> Self {
         Self {
             inner: Arc::new(graph),
+            embedding_provider: Arc::new(tokio::sync::RwLock::new(None)),
         }
+    }
+
+    /// Set an async embedding provider for automatic node embedding.
+    /// When set, every new node will be embedded in the background after creation.
+    pub async fn set_embedding_provider(
+        &self,
+        provider: Arc<dyn crate::embeddings::AsyncEmbeddingProvider>,
+    ) {
+        // Auto-configure HNSW index dimension if not already set
+        let dim = provider.dimension();
+        if self.inner.embedding_dimension().is_none() {
+            if let Err(e) = self.configure_embeddings(dim).await {
+                #[cfg(feature = "tracing")]
+                tracing::warn!("failed to auto-configure embeddings with dimension {dim}: {e}");
+                #[cfg(not(feature = "tracing"))]
+                eprintln!("failed to auto-configure embeddings with dimension {dim}: {e}");
+            }
+        }
+        *self.embedding_provider.write().await = Some(provider);
+    }
+
+    /// Get the current embedding provider, if set.
+    pub async fn get_embedding_provider(
+        &self,
+    ) -> Option<Arc<dyn crate::embeddings::AsyncEmbeddingProvider>> {
+        self.embedding_provider.read().await.clone()
     }
 
     /// Access the underlying synchronous graph.
@@ -70,14 +100,32 @@ impl AsyncMindGraph {
         &self.inner
     }
 
+    /// Fire-and-forget: embed a node in the background if a provider is set.
+    fn spawn_auto_embed(&self, uid: Uid) {
+        let provider_lock = self.embedding_provider.clone();
+        let graph = self.clone();
+        tokio::spawn(async move {
+            let provider = provider_lock.read().await.clone();
+            if let Some(provider) = provider {
+                if let Err(e) = graph.embed_node_async(&uid, provider.as_ref()).await {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(uid = %uid, "auto-embed failed: {e}");
+                    let _ = e;
+                }
+            }
+        });
+    }
+
     // ---- Node Operations ----
 
     /// Async version of [`MindGraph::add_node`].
     pub async fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
         let g = self.inner.clone();
-        tokio::task::spawn_blocking(move || g.add_node(create))
+        let node = tokio::task::spawn_blocking(move || g.add_node(create))
             .await
-            .map_err(join_err)?
+            .map_err(join_err)??;
+        self.spawn_auto_embed(node.uid.clone());
+        Ok(node)
     }
 
     /// Async version of [`MindGraph::get_node`].
@@ -478,9 +526,13 @@ impl AsyncMindGraph {
     /// Async version of [`MindGraph::add_nodes_batch`].
     pub async fn add_nodes_batch(&self, creates: Vec<CreateNode>) -> Result<Vec<GraphNode>> {
         let g = self.inner.clone();
-        tokio::task::spawn_blocking(move || g.add_nodes_batch(creates))
+        let nodes = tokio::task::spawn_blocking(move || g.add_nodes_batch(creates))
             .await
-            .map_err(join_err)?
+            .map_err(join_err)??;
+        for node in &nodes {
+            self.spawn_auto_embed(node.uid.clone());
+        }
+        Ok(nodes)
     }
 
     /// Async version of [`MindGraph::add_edges_batch`].
@@ -976,6 +1028,8 @@ impl AsyncMindGraph {
     }
 
     /// Async version of [`MindGraph::import_typed`].
+    /// Note: import already includes pre-computed embeddings from the snapshot,
+    /// so auto-embed is not triggered here.
     pub async fn import_typed(&self, snapshot: TypedSnapshot) -> Result<TypedImportResult> {
         let g = self.inner.clone();
         tokio::task::spawn_blocking(move || g.import_typed(&snapshot))
@@ -1036,6 +1090,8 @@ impl AsyncMindGraph {
     pub fn agent(&self, name: impl Into<String>) -> AsyncAgentHandle {
         AsyncAgentHandle {
             handle: crate::agent::AgentHandle::new(self.inner.clone(), name.into(), None),
+            embedding_provider: self.embedding_provider.clone(),
+            graph: self.clone(),
         }
     }
 }
@@ -1047,6 +1103,8 @@ impl AsyncMindGraph {
 #[derive(Clone)]
 pub struct AsyncAgentHandle {
     handle: crate::agent::AgentHandle,
+    embedding_provider: Arc<tokio::sync::RwLock<Option<Arc<dyn crate::embeddings::AsyncEmbeddingProvider>>>>,
+    graph: AsyncMindGraph,
 }
 
 impl AsyncAgentHandle {
@@ -1069,6 +1127,8 @@ impl AsyncAgentHandle {
     pub fn sub_agent(&self, name: impl Into<String>) -> AsyncAgentHandle {
         AsyncAgentHandle {
             handle: self.handle.sub_agent(name),
+            embedding_provider: self.embedding_provider.clone(),
+            graph: self.graph.clone(),
         }
     }
 
@@ -1078,9 +1138,11 @@ impl AsyncAgentHandle {
     pub async fn add_node(&self, create: CreateNode) -> Result<GraphNode> {
         let g = self.handle.graph_arc().clone();
         let agent = self.handle.agent_id().to_string();
-        tokio::task::spawn_blocking(move || g.add_node_as(create, &agent))
+        let node = tokio::task::spawn_blocking(move || g.add_node_as(create, &agent))
             .await
-            .map_err(join_err)?
+            .map_err(join_err)??;
+        self.graph.spawn_auto_embed(node.uid.clone());
+        Ok(node)
     }
 
     /// Async version of [`AgentHandle::add_edge`](crate::agent::AgentHandle::add_edge).

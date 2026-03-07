@@ -17,14 +17,14 @@ A structured semantic memory graph for agentic systems, built in Rust with [Cozo
 | **Epistemic** | Reasoning & knowledge | Claim, Evidence, Hypothesis, Theory, Concept |
 | **Intent** | Goals & decisions | Goal, Project, Decision, Option, Constraint |
 | **Action** | Affordances & workflows | Affordance, Flow, FlowStep, Control |
-| **Memory** | Persistence & recall | Session, Trace, Summary, Preference |
+| **Memory** | Persistence & recall | Session, Trace, Summary, Preference, Journal |
 | **Agent** | Control plane | Agent, Task, Plan, Approval, Policy |
 
-The graph supports **48 built-in node types** and **70 built-in edge types**, each with type-safe property structs. User-defined custom types are also supported via the `CustomNodeType` trait.
+The graph supports **53 built-in node types** and **70 built-in edge types**, each with type-safe property structs. User-defined custom types are also supported via the `CustomNodeType` trait.
 
 ## Features
 
-- **Type-safe schema** -- 48 node types and 70 edge types as Rust enums with typed props, plus extensible `Custom(String)` variants
+- **Type-safe schema** -- 53 node types and 70 edge types as Rust enums with typed props, plus extensible `Custom(String)` variants
 - **CozoDB storage** -- Embedded Datalog database with SQLite persistence or in-memory mode
 - **Full-text search** -- FTS indices on node labels and summaries with scoring and type/layer filters
 - **Structured filtering** -- `NodeFilter` builder for type (single or multi-type), layer, label substring, prop value, and confidence range queries
@@ -44,7 +44,7 @@ The graph supports **48 built-in node types** and **70 built-in edge types**, ea
 - **Thread safety** -- `MindGraph` is `Send + Sync`, safe to share via `Arc<MindGraph>` or `into_shared()`
 - **Async support** -- Optional `AsyncMindGraph` wrapper for tokio runtimes (feature flag: `async`) with all methods
 - **Server-side query filtering** -- Query patterns push filtering into CozoDB Datalog for efficient large-graph queries
-- **Embedding/vector search** -- Pluggable `EmbeddingProvider` (sync) and `AsyncEmbeddingProvider` (native async) traits, CozoDB HNSW indices, `semantic_search()` with cosine distance
+- **Embedding/vector search** -- Pluggable `EmbeddingProvider` (sync) and `AsyncEmbeddingProvider` (native async) traits, CozoDB HNSW indices, `semantic_search()` with cosine similarity (higher = better)
 - **Salience decay** -- Exponential decay with configurable half-life via `decay_salience()`, plus `auto_tombstone()` for cleanup
 - **Event subscriptions** -- `on_change()` callbacks, `on_change_filtered()` with `EventFilter`, and `watch()` async streaming via broadcast channels
 - **Convenience constructors** -- `add_claim()`, `add_entity()`, `add_goal()`, `add_observation()`, `add_session()`, `add_preference()`, `add_summary()`, `add_link()`
@@ -114,7 +114,7 @@ Enable the `async` feature for tokio integration:
 
 ```toml
 [dependencies]
-mindgraph = { version = "0.6", features = ["async"] }
+mindgraph = { version = "0.8", features = ["async"] }
 ```
 
 ```rust
@@ -239,7 +239,7 @@ Enable the `tracing` feature for observability:
 
 ```toml
 [dependencies]
-mindgraph = { version = "0.6", features = ["tracing"] }
+mindgraph = { version = "0.8", features = ["tracing"] }
 ```
 
 Key methods (`add_node`, `search`, `find_nodes`, `reachable`, `stats`, etc.) are instrumented with `tracing::instrument`. Combine with `tracing-subscriber` to get structured logs.
@@ -373,7 +373,7 @@ The main entry point. All operations go through this struct. It is `Send + Sync`
 | `set_embedding(uid, vec)` | Store an embedding vector for a node |
 | `get_embedding(uid)` | Retrieve a node's embedding vector |
 | `delete_embedding(uid)` | Remove a node's embedding |
-| `semantic_search(query_vec, k)` | Find k nearest neighbors by cosine distance (auto-compensates for tombstoned nodes) |
+| `semantic_search(query_vec, k)` | Find k nearest neighbors by cosine similarity (higher = better, auto-compensates for tombstoned nodes) |
 | `embed_node(uid, provider)` | Generate and store embedding via `EmbeddingProvider` |
 | `embed_nodes(uids, provider)` | Bulk embed multiple nodes via `embed_batch()`, skips tombstoned |
 | `semantic_search_text(query, k, provider)` | Embed query text and search |
@@ -550,12 +550,12 @@ if page1.has_more {
 | `Salience` | Validated f64 in 0.0-1.0 (contextual relevance, decays over time) |
 | `PrivacyLevel` | `Private`, `Shared`, or `Public` |
 | `Timestamp` | Unix timestamp as f64 |
-| `NodeProps` | Discriminated union of all 48 node property structs |
+| `NodeProps` | Discriminated union of all 53 node property structs |
 | `EdgeProps` | Discriminated union of all 70 edge property structs |
 
 ### Schema
 
-**48 node types** across 6 layers:
+**53 node types** (excluding Custom) across 6 layers:
 
 | Layer | Node Types |
 |-------|-----------|
@@ -563,7 +563,7 @@ if page1.has_more {
 | Epistemic (24) | Claim, Evidence, Warrant, Argument, Hypothesis, Theory, Paradigm, Anomaly, Method, Experiment, Concept, Assumption, Question, OpenQuestion, Analogy, Pattern, Mechanism, Model, ModelEvaluation, InferenceChain, SensitivityAnalysis, ReasoningStrategy, Theorem, Equation |
 | Intent (6) | Goal, Project, Decision, Option, Constraint, Milestone |
 | Action (5) | Affordance, Flow, FlowStep, Control, RiskAssessment |
-| Memory (5) | Session, Trace, Summary, Preference, MemoryPolicy |
+| Memory (6) | Session, Trace, Summary, Preference, MemoryPolicy, Journal |
 | Agent (8) | Agent, Task, Plan, PlanStep, Approval, Policy, Execution, SafetyBudget |
 
 **70 edge types** across categories:
@@ -602,7 +602,7 @@ MINDGRAPH_PORT=18790 \
 | `MINDGRAPH_PORT` | `18790` | Listen port |
 | `MINDGRAPH_DEFAULT_AGENT` | `system` | Default agent identity for mutations |
 
-### API Endpoints (49 routes)
+### API Endpoints
 
 **Unauthenticated:**
 
@@ -610,18 +610,11 @@ MINDGRAPH_PORT=18790 \
 |--------|------|-------------|
 | GET | `/health` | Health check |
 
-**Authenticated — CRUD Layer (31 routes):**
+**Authenticated — CRUD Layer:**
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/stats` | Graph-wide statistics |
-| POST | `/entity` | Add entity node |
-| POST | `/claim` | Add claim node |
-| POST | `/goal` | Add goal node |
-| POST | `/preference` | Add preference node |
-| POST | `/session` | Add session node |
-| POST | `/observation` | Add observation node |
-| POST | `/summary` | Add summary node |
 | POST | `/node` | Add generic node with full `NodeProps` |
 | GET | `/node/{uid}` | Get node by UID |
 | PATCH | `/node/{uid}` | Update node fields and/or props |
@@ -645,6 +638,21 @@ MINDGRAPH_PORT=18790 \
 | GET | `/resolve?text=&limit=` | Exact + fuzzy alias resolution |
 | GET | `/export` | Export typed snapshot |
 | POST | `/import` | Import typed snapshot |
+| POST | `/embeddings/configure` | Initialize embedding HNSW index |
+| POST | `/embeddings/search` | Semantic vector search |
+| POST | `/embeddings/search-text` | Embed query text and search |
+| PUT | `/embeddings/{uid}` | Set embedding for a node |
+| GET | `/embeddings/{uid}` | Get embedding for a node |
+| DELETE | `/embeddings/{uid}` | Delete embedding for a node |
+| POST | `/batch` | Batch apply operations |
+| GET | `/goals` | Active goals |
+| GET | `/decisions` | Open decisions |
+| GET | `/questions` | Open questions |
+| GET | `/claims/weak` | Weak claims below threshold |
+| GET | `/contradictions` | Unresolved contradictions |
+| GET | `/approvals/pending` | Pending approvals |
+| POST | `/subgraph` | Extract subgraph |
+| GET | `/edge/between` | Find edges between two nodes |
 | POST | `/decay` | Salience decay + optional auto-tombstone |
 | POST | `/purge` | Hard-delete old tombstoned data |
 
@@ -693,7 +701,7 @@ mindgraph                      -- Library crate (published to crates.io)
 │   ├── cozo.rs                -- CozoStorage: CozoDB CRUD, traversal, pagination, batch ops
 │   └── migrations.rs          -- Schema DDL (CozoDB :create statements + indices)
 ├── schema/
-│   ├── mod.rs                 -- Layer, NodeType (48), EdgeType (70) enums
+│   ├── mod.rs                 -- Layer, NodeType (53), EdgeType (70) enums
 │   ├── node.rs                -- GraphNode, CreateNode
 │   ├── edge.rs                -- GraphEdge, CreateEdge
 │   ├── node_props.rs          -- NodeProps discriminated union
@@ -703,7 +711,7 @@ mindgraph                      -- Library crate (published to crates.io)
 │       ├── epistemic.rs  (24 structs)
 │       ├── intent.rs     (6 structs)
 │       ├── action.rs     (5 structs)
-│       ├── memory.rs     (5 structs)
+│       ├── memory.rs     (6 structs)
 │       └── agent.rs      (8 structs)
 ├── traversal.rs               -- Direction, TraversalOptions, PathStep
 ├── query.rs                   -- Pagination, Page<T>, GraphStats, DecayResult, TypedSnapshot, etc.
@@ -717,7 +725,7 @@ mindgraph                      -- Library crate (published to crates.io)
 └── error.rs                   -- Error types + Result alias
 
 mindgraph-server/              -- Binary crate (HTTP server, not published)
-├── src/main.rs                -- Axum app setup: routes, auth middleware, AppState (31 CRUD endpoints)
+├── src/main.rs                -- Axum app setup: routes, auth middleware, AppState
 └── src/handlers.rs            -- Cognitive layer handlers (18 higher-level endpoints)
 ```
 

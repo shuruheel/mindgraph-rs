@@ -140,11 +140,11 @@ fn resolve_agent_id(id: Option<String>) -> String {
 }
 
 // ============================================================
-// Endpoint 1 — POST /reality/ingest
+// Endpoint 1 — POST /reality/capture
 // ============================================================
 
 #[derive(Deserialize)]
-pub(crate) struct IngestRequest {
+pub(crate) struct CaptureRequest {
     pub(crate) action: String,
     pub(crate) label: String,
     #[serde(default)]
@@ -161,9 +161,9 @@ pub(crate) struct IngestRequest {
     pub(crate) props: Option<serde_json::Value>,
 }
 
-pub(crate) async fn ingest_reality(
+pub(crate) async fn capture_reality(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<IngestRequest>,
+    Json(req): Json<CaptureRequest>,
 ) -> Result<impl axum::response::IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let agent_id = resolve_agent_id(req.agent_id);
     let handle = state.graph.agent(&agent_id);
@@ -187,7 +187,7 @@ pub(crate) async fn ingest_reality(
         other => {
             return Err(err_with_code(
                 StatusCode::BAD_REQUEST,
-                format!("unknown ingest action: {other}"),
+                format!("unknown capture action: {other}"),
                 "unknown_action",
             ))
         }

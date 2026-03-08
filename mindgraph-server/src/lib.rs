@@ -1545,7 +1545,7 @@ pub fn graph_router() -> Router<Arc<AppState>> {
         .route("/decay", post(decay))
         .route("/purge", post(purge))
         // Cognitive layer endpoints
-        .route("/reality/ingest", post(handlers::ingest_reality))
+        .route("/reality/capture", post(handlers::capture_reality))
         .route("/reality/entity", post(handlers::manage_entity))
         .route("/epistemic/argument", post(handlers::argument))
         .route("/epistemic/inquiry", post(handlers::inquiry))

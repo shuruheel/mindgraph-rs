@@ -662,7 +662,7 @@ These higher-level endpoints compose multiple graph operations into single seman
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/reality/ingest` | Ingest a source, snippet, or observation into the Reality layer |
+| POST | `/reality/capture` | Capture a source, snippet, or observation into the Reality layer |
 | POST | `/reality/entity` | Create, alias, resolve, fuzzy-resolve, or merge entities |
 | POST | `/epistemic/argument` | Construct a full argument: claim + evidence + warrant + edges |
 | POST | `/epistemic/inquiry` | Add hypothesis, theory, paradigm, anomaly, assumption, or question |
